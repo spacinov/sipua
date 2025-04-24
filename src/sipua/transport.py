@@ -15,10 +15,12 @@ import sipmessage
 
 logger = logging.getLogger(__name__)
 
-MessageHandler = typing.Callable[[sipmessage.Message], typing.Awaitable[None]]
+ConnectHandler = typing.Callable[["BaseTransport"], None]
+DisconnectHandler = typing.Callable[["BaseTransport", Exception | None], None]
+MessageHandler = typing.Callable[["BaseTransport", sipmessage.Message], None]
 
-AUTO_HOST = "auto"
-AUTO_TRANSPORT = "AUTO"
+ANY_HOST = "any"
+ANY_PORT = 0
 
 
 @dataclasses.dataclass
@@ -31,6 +33,7 @@ class TransportAddress:
 class BaseTransport(abc.ABC):
     is_reliable: bool
     uri_transport: str
+    remote_address: TransportAddress | None = None
     via_host: str
     via_port: int | None = None
     via_transport: str
@@ -149,7 +152,7 @@ def set_transport_source(message: sipmessage.Message, transport: BaseTransport) 
     if isinstance(message, sipmessage.Request):
         # Rewrite the top-most Via with our address.
         vias = message.via
-        if vias and vias[0].host == AUTO_HOST:
+        if vias and vias[0].host == ANY_HOST:
             vias[0] = dataclasses.replace(
                 vias[0],
                 host=transport.via_host,
@@ -162,7 +165,7 @@ def set_transport_source(message: sipmessage.Message, transport: BaseTransport) 
     contacts = []
     contacts_changed = False
     for contact in message.contact:
-        if contact.uri.host == AUTO_HOST:
+        if contact.uri.host == ANY_HOST:
             contact = dataclasses.replace(
                 contact,
                 uri=dataclasses.replace(
@@ -218,8 +221,13 @@ class TransportLayer:
     SIP transport layer.
     """
 
-    def __init__(self, *, message_handler: MessageHandler) -> None:
-        self._message_handler = message_handler
+    def __init__(
+        self,
+        *,
+        message_handler: typing.Callable[[sipmessage.Message], None],
+    ) -> None:
+        self._message_notifier = message_handler
+        self._servers: set[asyncio.Server] = set()
         self._transports: set[BaseTransport] = set()
 
     async def close(self) -> None:
@@ -232,16 +240,37 @@ class TransportLayer:
             await transport.close()
         self._transports.clear()
 
+        for server in set(self._servers):
+            server.close()
+        self._servers.clear()
+
     async def listen(self, address: TransportAddress) -> None:
         """
         Start listening on the given transport address.
         """
-        assert address.protocol == "udp"
-        transport = await create_udp_transport(
-            message_handler=self._message_handler,
-            local_addr=(address.host, address.port),
-        )
-        self._transports.add(transport)
+        loop = asyncio.get_running_loop()
+
+        if address.protocol == "tcp":
+            server = await loop.create_server(
+                lambda: TcpTransport(
+                    connect_handler=self._connect_handler,
+                    disconnect_handler=self._disconnect_handler,
+                    message_handler=self._message_handler,
+                ),
+                host=address.host,
+                port=address.port,
+            )
+            self._servers.add(server)
+        else:
+            assert address.protocol == "udp"
+            await loop.create_datagram_endpoint(
+                lambda: UdpTransport(
+                    connect_handler=self._connect_handler,
+                    disconnect_handler=self._disconnect_handler,
+                    message_handler=self._message_handler,
+                ),
+                local_addr=(address.host, address.port),
+            )
 
     async def send_message(self, message: sipmessage.Message) -> bool:
         """
@@ -255,8 +284,7 @@ class TransportLayer:
         destination = await get_transport_destination(message)
 
         # Determine transport to use.
-        assert len(self._transports) == 1, "Only a single transport is supported"
-        transport = list(self._transports)[0]
+        transport = await self._acquire_transport(destination)
 
         # Rewrite references to our transport address.
         set_transport_source(message, transport)
@@ -265,13 +293,141 @@ class TransportLayer:
         await transport.send_message(message, destination)
         return transport.is_reliable
 
+    async def _acquire_transport(self, destination: TransportAddress) -> BaseTransport:
+        """
+        Find a suitable transport for the given destination.
+        """
+        for transport in self._transports:
+            if (
+                transport.remote_address is not None
+                and transport.remote_address.protocol == destination.protocol
+                and (transport.remote_address.host in (destination.host, ANY_HOST))
+                and (transport.remote_address.port in (destination.port, ANY_PORT))
+            ):
+                return transport
+
+        if destination.protocol == "tcp" and self._servers:
+            loop = asyncio.get_running_loop()
+            _transport, protocol = await loop.create_connection(
+                lambda: TcpTransport(
+                    connect_handler=self._connect_handler,
+                    disconnect_handler=self._disconnect_handler,
+                    message_handler=self._message_handler,
+                ),
+                host=destination.host,
+                port=destination.port,
+            )
+            assert protocol in self._transports
+            return protocol
+
+        raise RuntimeError("No suitable transport found")
+
+    def _connect_handler(self, transport: BaseTransport) -> None:
+        self._transports.add(transport)
+
+    def _disconnect_handler(
+        self, transport: BaseTransport, exc: Exception | None
+    ) -> None:
+        self._transports.discard(transport)
+
+    def _message_handler(
+        self, _transport: BaseTransport, message: sipmessage.Message
+    ) -> None:
+        self._message_notifier(message)
+
+
+class TcpTransport(BaseTransport, asyncio.Protocol):
+    is_reliable = True
+    uri_transport = "tcp"
+    via_transport = "TCP"
+
+    def __init__(
+        self,
+        *,
+        connect_handler: ConnectHandler,
+        disconnect_handler: DisconnectHandler,
+        message_handler: MessageHandler,
+    ) -> None:
+        self._connect_handler = connect_handler
+        self._disconnect_handler = disconnect_handler
+        self._message_handler = message_handler
+        self._transport: asyncio.Transport | None = None
+
+    async def close(self) -> None:
+        if self._transport is not None:
+            self._transport.close()
+
+    async def send_message(
+        self, message: sipmessage.Message, destination: TransportAddress
+    ) -> None:
+        message_str = str(message)
+        logger.info("=>\n\n" + message_str)
+
+        if self._transport is not None:
+            self._transport.write(message_str.encode("utf8"))
+
+    # Protocol
+
+    def connection_lost(self, exc: Exception | None) -> None:
+        self._disconnect_handler(self, exc)
+
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
+        self._transport = typing.cast(asyncio.Transport, transport)
+
+        sockname = transport.get_extra_info("sockname")
+        self.via_host = sockname[0]
+        self.via_port = sockname[1]
+
+        peername = transport.get_extra_info("peername")
+        self.remote_address = TransportAddress(
+            protocol="tcp",
+            host=peername[0],
+            port=peername[1],
+        )
+
+        self._connect_handler(self)
+
+    def data_received(self, data: bytes) -> None:
+        message_str = data.decode("utf8")
+        logger.info("<=\n\n" + message_str)
+
+        try:
+            message = sipmessage.Message.parse(message_str)
+        except ValueError:
+            # We cannot recover, close the socket.
+            assert self._transport is not None
+            self._transport.close()
+            return
+        else:
+            if (
+                isinstance(message, sipmessage.Request)
+                and self.remote_address is not None
+            ):
+                update_request_via(
+                    message, self.remote_address.host, self.remote_address.port
+                )
+            self._message_handler(self, message)
+
 
 class UdpTransport(BaseTransport, asyncio.DatagramProtocol):
     is_reliable = False
+    remote_address = TransportAddress(
+        protocol="udp",
+        host=ANY_HOST,
+        port=ANY_PORT,
+    )
     uri_transport = "udp"
     via_transport = "UDP"
 
-    def __init__(self, *, message_handler: MessageHandler) -> None:
+    def __init__(
+        self,
+        *,
+        connect_handler: ConnectHandler,
+        disconnect_handler: DisconnectHandler,
+        message_handler: MessageHandler,
+    ) -> None:
+        self._connect_handler = connect_handler
+        self._disconnect_handler = disconnect_handler
         self._message_handler = message_handler
         self._transport: asyncio.DatagramTransport | None = None
 
@@ -291,12 +447,17 @@ class UdpTransport(BaseTransport, asyncio.DatagramProtocol):
 
     # DatagramProtocol
 
+    def connection_lost(self, exc: Exception | None) -> None:
+        self._disconnect_handler(self, exc)
+
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self._transport = typing.cast(asyncio.DatagramTransport, transport)
 
         sockname = transport.get_extra_info("sockname")
         self.via_host = sockname[0]
         self.via_port = sockname[1]
+
+        self._connect_handler(self)
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         message_str = data.decode("utf8")
@@ -305,23 +466,9 @@ class UdpTransport(BaseTransport, asyncio.DatagramProtocol):
         try:
             message = sipmessage.Message.parse(message_str)
         except ValueError:
+            # Ignore the datagram.
             return
         else:
             if isinstance(message, sipmessage.Request):
                 update_request_via(message, addr[0], addr[1])
-            asyncio.ensure_future(self._message_handler(message))
-
-
-async def create_udp_transport(
-    *,
-    message_handler: MessageHandler,
-    local_addr: tuple[str, int] | None,
-    remote_addr: tuple[str, int] | None = None,
-) -> UdpTransport:
-    loop = asyncio.get_event_loop()
-    _, protocol = await loop.create_datagram_endpoint(
-        lambda: UdpTransport(message_handler=message_handler),
-        local_addr=local_addr,
-        remote_addr=remote_addr,
-    )
-    return protocol
+            self._message_handler(self, message)

@@ -1,5 +1,8 @@
 all: test lint lint-pkg
 
+clean:
+	rm -rf .coverage .mypy_cache .ruff_cache docs/_build htmlcov
+
 lint:
 	ruff check --diff
 	ruff format --diff

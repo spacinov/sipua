@@ -1,0 +1,23 @@
+# Build artifacts
+*.egg-info
+*.mo
+*.pyc
+.mypy_cache
+.*-done
+
+# Test artifacts
+.coverage*
+coverage.xml
+htmlcov/
+tests.log
+
+# Editor / IDE files
+.vscode
+.*.swp
+env/
+tags
+
+# Packaging
+build/
+dist/
+docs/_build/

@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Version
+name = "sipua"
+version = "0.1.0"
+
+# Dependencies
+dependencies = ["sipmessage"]
+requires-python = ">= 3.10"
+
+# Development
+authors = [
+    {name = "Spacinov Engineering", email="opensource@spacinov.com"},
+]
+license = "BSD-2-Clause"
+
+# Description
+description = "Pure python SIP user agent"
+readme = {file = "README.rst", content-type = "text/x-rst"}
+
+# PyPI
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Telecommunications Industry",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Communications :: Telephony",
+    "Typing :: Typed",
+]
+keywords = ["SIP", "RFC3261"]
+
+[project.optional-dependencies]
+dev = [
+    "check-manifest",
+    "coverage",
+    "mypy",
+    "pyroma",
+    "ruff",
+]
+
+[project.urls]
+Homepage = "https://sipua.readthedocs.io/"
+Documentation = "https://sipua.readthedocs.io/"
+Repository = "https://github.com/spacinov/sipua"
+Issues = "https://github.com/spacinov/sipua/issues"
+
+[tool.coverage.run]
+include = ["src/*"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["sipua"]
+namespaces = false
+
+[tool.mypy]
+ignore_missing_imports = false
+strict = true
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle
+    "F",  # Pyflakes
+    "W",  # pycodestyle
+    "I",  # isort
+    "T20",  # flake8-print
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E501"]

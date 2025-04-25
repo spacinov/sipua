@@ -19,9 +19,18 @@ from .utils import random_string, response_establishes_dialog
 
 logger = logging.getLogger(__name__)
 
-ConnectHandler = typing.Callable[["BaseTransport"], None]
-DisconnectHandler = typing.Callable[["BaseTransport", Exception | None], None]
-MessageHandler = typing.Callable[["BaseTransport", sipmessage.Message], None]
+# Internal handlers.
+ConnectHandler = typing.Callable[["TransportChannel"], None]
+DisconnectHandler = typing.Callable[["TransportChannel", Exception | None], None]
+MessageHandler = typing.Callable[["TransportChannel", sipmessage.Message], None]
+
+# Public handlers.
+RequestHandler = typing.Callable[
+    [sipmessage.Request], typing.Coroutine[None, None, None]
+]
+ResponseHandler = typing.Callable[
+    [sipmessage.Response], typing.Coroutine[None, None, None]
+]
 
 ANY_HOST = "any"
 ANY_PORT = 0
@@ -35,7 +44,8 @@ SIP_STATUS_CODES = {
     404: "Not Found",
     407: "Proxy Authentication Required",
 }
-SIP_SUBPROTOCOL = typing.cast(websockets.Subprotocol, "sip")
+
+WEBSOCKET_SUBPROTOCOL = typing.cast(websockets.Subprotocol, "sip")
 
 
 @dataclasses.dataclass
@@ -45,7 +55,7 @@ class TransportAddress:
     port: int
 
 
-class BaseTransport(abc.ABC):
+class TransportChannel(abc.ABC):
     is_reliable: bool
     uri_transport: str
     remote_address: TransportAddress | None = None
@@ -163,16 +173,18 @@ async def get_transport_destination(message: sipmessage.Message) -> TransportAdd
     return TransportAddress(protocol=protocol, host=host, port=port)
 
 
-def set_transport_source(message: sipmessage.Message, transport: BaseTransport) -> None:
+def set_transport_source(
+    message: sipmessage.Message, channel: TransportChannel
+) -> None:
     if isinstance(message, sipmessage.Request):
         # Rewrite the top-most Via with our address.
         vias = message.via
         if vias and vias[0].host == ANY_HOST:
             vias[0] = dataclasses.replace(
                 vias[0],
-                host=transport.via_host,
-                port=transport.via_port,
-                transport=transport.via_transport,
+                host=channel.via_host,
+                port=channel.via_port,
+                transport=channel.via_transport,
             )
             message.via = vias
 
@@ -185,10 +197,10 @@ def set_transport_source(message: sipmessage.Message, transport: BaseTransport) 
                 contact,
                 uri=dataclasses.replace(
                     contact.uri,
-                    host=transport.via_host,
-                    port=transport.via_port,
+                    host=channel.via_host,
+                    port=channel.via_port,
                     parameters=contact.uri.parameters.replace(
-                        transport=transport.uri_transport
+                        transport=channel.uri_transport
                     ),
                 ),
             )
@@ -236,25 +248,24 @@ class TransportLayer:
     SIP transport layer.
     """
 
-    def __init__(
-        self,
-        *,
-        message_handler: typing.Callable[[sipmessage.Message], None],
-    ) -> None:
-        self._message_notifier = message_handler
+    def __init__(self) -> None:
+        self._channels: set[TransportChannel] = set()
         self._tcp_servers: set[asyncio.Server] = set()
-        self._transports: set[BaseTransport] = set()
         self._ws_servers: set[websockets.asyncio.server.Server] = set()
+
+        #: A coroutine which will be called whenever a request is received.
+        self.request_handler: RequestHandler | None = None
+
+        #: A coroutine which will be called whenever a response is received.
+        self.response_handler: ResponseHandler | None = None
 
     async def close(self) -> None:
         """
         Close the transport layer.
         """
-        # Iterate over a copy of the transports to allow changes
-        # during iteration.
-        for transport in set(self._transports):
-            await transport.close()
-        self._transports.clear()
+        for channel in set(self._channels):
+            await channel.close()
+        self._channels.clear()
 
         for tcp_server in self._tcp_servers:
             tcp_server.close()
@@ -323,7 +334,7 @@ class TransportLayer:
 
         if address.protocol == "tcp":
             tcp_server = await loop.create_server(
-                lambda: TcpTransport(
+                lambda: TcpTransportChannel(
                     connect_handler=self._connect_handler,
                     disconnect_handler=self._disconnect_handler,
                     message_handler=self._message_handler,
@@ -337,13 +348,13 @@ class TransportLayer:
                 self._serve_websocket,
                 address.host,
                 address.port,
-                subprotocols=[SIP_SUBPROTOCOL],
+                subprotocols=[WEBSOCKET_SUBPROTOCOL],
             )
             self._ws_servers.add(ws_server)
         else:
             assert address.protocol == "udp"
             await loop.create_datagram_endpoint(
-                lambda: UdpTransport(
+                lambda: UdpTransportChannel(
                     connect_handler=self._connect_handler,
                     disconnect_handler=self._disconnect_handler,
                     message_handler=self._message_handler,
@@ -362,33 +373,33 @@ class TransportLayer:
         # Determine transport recipient.
         destination = await get_transport_destination(message)
 
-        # Determine transport to use.
-        transport = await self._acquire_transport(destination)
+        # Determine channel to use.
+        channel = await self._acquire_channel(destination)
 
         # Rewrite references to our transport address.
-        set_transport_source(message, transport)
+        set_transport_source(message, channel)
 
         # Send the message and return whether a reliable transport was used.
-        await transport.send_message(message, destination)
-        return transport.is_reliable
+        await channel.send_message(message, destination)
+        return channel.is_reliable
 
-    async def _acquire_transport(self, destination: TransportAddress) -> BaseTransport:
+    async def _acquire_channel(self, destination: TransportAddress) -> TransportChannel:
         """
         Find a suitable transport for the given destination.
         """
-        for transport in self._transports:
+        for channel in self._channels:
             if (
-                transport.remote_address is not None
-                and transport.remote_address.protocol == destination.protocol
-                and (transport.remote_address.host in (destination.host, ANY_HOST))
-                and (transport.remote_address.port in (destination.port, ANY_PORT))
+                channel.remote_address is not None
+                and channel.remote_address.protocol == destination.protocol
+                and (channel.remote_address.host in (destination.host, ANY_HOST))
+                and (channel.remote_address.port in (destination.port, ANY_PORT))
             ):
-                return transport
+                return channel
 
         if destination.protocol == "tcp" and self._tcp_servers:
             loop = asyncio.get_running_loop()
-            _transport, protocol = await loop.create_connection(
-                lambda: TcpTransport(
+            _transport, channel = await loop.create_connection(
+                lambda: TcpTransportChannel(
                     connect_handler=self._connect_handler,
                     disconnect_handler=self._disconnect_handler,
                     message_handler=self._message_handler,
@@ -396,42 +407,51 @@ class TransportLayer:
                 host=destination.host,
                 port=destination.port,
             )
-            assert protocol in self._transports
-            return protocol
+            assert channel in self._channels
+            return channel
 
         raise RuntimeError("No suitable transport found")
 
-    def _connect_handler(self, transport: BaseTransport) -> None:
-        self._transports.add(transport)
+    async def _handle_message(self, message: sipmessage.Message) -> None:
+        if isinstance(message, sipmessage.Request) and self.request_handler is not None:
+            await self.request_handler(message)
+        elif (
+            isinstance(message, sipmessage.Response)
+            and self.response_handler is not None
+        ):
+            await self.response_handler(message)
+
+    def _connect_handler(self, channel: TransportChannel) -> None:
+        self._channels.add(channel)
 
     def _disconnect_handler(
-        self, transport: BaseTransport, exc: Exception | None
+        self, channel: TransportChannel, exc: Exception | None
     ) -> None:
-        self._transports.discard(transport)
+        self._channels.discard(channel)
 
     def _message_handler(
-        self, _transport: BaseTransport, message: sipmessage.Message
+        self, channel: TransportChannel, message: sipmessage.Message
     ) -> None:
-        self._message_notifier(message)
+        asyncio.create_task(self._handle_message(message))
 
     async def _serve_websocket(
         self,
         websocket: websockets.asyncio.server.ServerConnection,
     ) -> None:
-        transport = WebsocketTransport(
+        channel = WebsocketTransportChannel(
             message_handler=self._message_handler,
             websocket=websocket,
         )
-        self._connect_handler(transport)
+        self._connect_handler(channel)
         try:
             async for data in websocket:
                 if isinstance(data, bytes):
-                    transport.message_received(data)
+                    channel.message_received(data)
         finally:
-            self._disconnect_handler(transport, None)
+            self._disconnect_handler(channel, None)
 
 
-class TcpTransport(BaseTransport, asyncio.Protocol):
+class TcpTransportChannel(TransportChannel, asyncio.Protocol):
     is_reliable = True
     uri_transport = "tcp"
     via_transport = "TCP"
@@ -502,7 +522,7 @@ class TcpTransport(BaseTransport, asyncio.Protocol):
             self._message_handler(self, message)
 
 
-class UdpTransport(BaseTransport, asyncio.DatagramProtocol):
+class UdpTransportChannel(TransportChannel, asyncio.DatagramProtocol):
     is_reliable = False
     remote_address = TransportAddress(
         protocol="udp",
@@ -567,7 +587,7 @@ class UdpTransport(BaseTransport, asyncio.DatagramProtocol):
             self._message_handler(self, message)
 
 
-class WebsocketTransport(BaseTransport):
+class WebsocketTransportChannel(TransportChannel):
     is_reliable = True
     uri_transport = "ws"
     via_transport = "WS"

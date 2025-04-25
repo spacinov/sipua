@@ -18,7 +18,7 @@ import websockets.asyncio.connection
 from sipua.transport import (
     ANY_HOST,
     ANY_TRANSPORT,
-    SIP_SUBPROTOCOL,
+    WEBSOCKET_SUBPROTOCOL,
     TransportAddress,
     TransportLayer,
     get_transport_destination,
@@ -145,10 +145,12 @@ class BaseTestCase(unittest.TestCase):
     ) -> AsyncGenerator[tuple[TransportLayer, list[sipmessage.Message]], None]:
         received: list[sipmessage.Message] = []
 
-        def message_handler(message: sipmessage.Message) -> None:
+        async def message_handler(message: sipmessage.Message) -> None:
             received.append(message)
 
-        transport = TransportLayer(message_handler=message_handler)
+        transport = TransportLayer()
+        transport.request_handler = message_handler
+        transport.response_handler = message_handler
         try:
             for addr in listen_addresses:
                 await transport.listen(addr)
@@ -157,7 +159,7 @@ class BaseTestCase(unittest.TestCase):
             await transport.close()
 
 
-class NoTransportTest(BaseTestCase):
+class NoTransportChannelTest(BaseTestCase):
     @asynctest
     async def test_send_request(self) -> None:
         async with self.transport_layer([]) as (transport, _received):
@@ -167,7 +169,7 @@ class NoTransportTest(BaseTestCase):
             self.assertEqual(str(cm.exception), "No suitable transport found")
 
 
-class TcpTransportTest(BaseTestCase):
+class TcpTransportChannelTest(BaseTestCase):
     @contextlib.asynccontextmanager
     async def transport_layer_and_socket(
         self,
@@ -190,8 +192,8 @@ class TcpTransportTest(BaseTestCase):
             # Check no message was received.
             self.assertEqual(received, [])
 
-            # Check the connection was closed.
-            self.assertEqual(transport._transports, set())
+            # Check the channel was closed.
+            self.assertEqual(transport._channels, set())
 
     @asynctest
     async def test_receive_request_send_response(self) -> None:
@@ -295,7 +297,7 @@ Content-Length: 0
                 await sock.close()
 
 
-class UdpTransportTest(BaseTestCase):
+class UdpTransportChannelTest(BaseTestCase):
     @contextlib.asynccontextmanager
     async def transport_layer_and_socket(
         self,
@@ -318,8 +320,8 @@ class UdpTransportTest(BaseTestCase):
             # Check no message was received.
             self.assertEqual(received, [])
 
-            # Check the connection was not closed.
-            self.assertEqual(len(transport._transports), 1)
+            # Check the channel was not closed.
+            self.assertEqual(len(transport._channels), 1)
 
     @asynctest
     async def test_receive_request_send_response(self) -> None:
@@ -409,7 +411,7 @@ Content-Length: 0
             self.assertEqual(response.phrase, "OK")
 
 
-class WebsocketTransportTest(BaseTestCase):
+class WebsocketTransportChannelTest(BaseTestCase):
     @contextlib.asynccontextmanager
     async def transport_layer_and_socket(
         self,
@@ -425,7 +427,7 @@ class WebsocketTransportTest(BaseTestCase):
             [TransportAddress(protocol="ws", host="127.0.0.1", port=5080)]
         ) as (transport, received):
             async with websockets.asyncio.client.connect(
-                "ws://127.0.0.1:5080", subprotocols=[SIP_SUBPROTOCOL]
+                "ws://127.0.0.1:5080", subprotocols=[WEBSOCKET_SUBPROTOCOL]
             ) as websocket:
                 yield (transport, TestWebsocket(websocket), received)
 
@@ -438,7 +440,7 @@ class WebsocketTransportTest(BaseTestCase):
             self.assertEqual(received, [])
 
             # Check the connection was not closed.
-            self.assertEqual(len(transport._transports), 1)
+            self.assertEqual(len(transport._channels), 1)
 
     @asynctest
     async def test_receive_request_send_response(self) -> None:
@@ -534,7 +536,7 @@ Content-Length: 0
 
 class CreateResponseAndAckTest(BaseTestCase):
     def test_create_invite_response_and_ack(self) -> None:
-        transport = TransportLayer(message_handler=lambda x: None)
+        transport = TransportLayer()
         request = parse_request("""INVITE sip:+33233445566@127.0.0.1:5060 SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
@@ -585,7 +587,7 @@ CSeq: 1 ACK
         )
 
     def test_create_invite_response_with_record_route(self) -> None:
-        transport = TransportLayer(message_handler=lambda x: None)
+        transport = TransportLayer()
         request = parse_request("""INVITE sip:callee@u2.domain.com SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70

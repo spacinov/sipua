@@ -8,6 +8,8 @@ import functools
 from collections.abc import Callable, Coroutine
 from typing import ParamSpec, TypeVar
 
+import sipmessage
+
 P = ParamSpec("P")
 T = TypeVar("T")
 
@@ -24,3 +26,15 @@ def asynctest(
 
 def lf2crlf(x: str) -> str:
     return x.replace("\n", "\r\n")
+
+
+def parse_request(data: str) -> sipmessage.Request:
+    message = sipmessage.Message.parse(lf2crlf(data))
+    assert isinstance(message, sipmessage.Request)
+    return message
+
+
+def parse_response(data: str) -> sipmessage.Response:
+    message = sipmessage.Message.parse(lf2crlf(data))
+    assert isinstance(message, sipmessage.Response)
+    return message

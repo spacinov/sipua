@@ -5,9 +5,17 @@
 
 import importlib.metadata
 
+from .transaction import (
+    ServerInviteTransaction,
+    ServerNonInviteTransaction,
+    TransactionLayer,
+)
 from .transport import TransportAddress, TransportLayer
 
 __all__ = [
+    "ServerInviteTransaction",
+    "ServerNonInviteTransaction",
+    "TransactionLayer",
     "TransportAddress",
     "TransportLayer",
 ]

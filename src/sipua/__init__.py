@@ -5,10 +5,10 @@
 
 import importlib.metadata
 
-from .transport import TransportAddress, TransportLayer
+from .transport import Transport, TransportAddress
 
 __all__ = [
+    "Transport",
     "TransportAddress",
-    "TransportLayer",
 ]
 __version__ = importlib.metadata.version("sipua")

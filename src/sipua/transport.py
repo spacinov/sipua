@@ -12,6 +12,10 @@ import socket
 import typing
 
 import sipmessage
+import websockets.asyncio.connection
+import websockets.asyncio.server
+
+from .utils import random_string
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +25,9 @@ MessageHandler = typing.Callable[["BaseTransport", sipmessage.Message], None]
 
 ANY_HOST = "any"
 ANY_PORT = 0
+ANY_TRANSPORT = "ANY"
+
+SIP_SUBPROTOCOL = typing.cast(websockets.Subprotocol, "sip")
 
 
 @dataclasses.dataclass
@@ -227,8 +234,9 @@ class TransportLayer:
         message_handler: typing.Callable[[sipmessage.Message], None],
     ) -> None:
         self._message_notifier = message_handler
-        self._servers: set[asyncio.Server] = set()
+        self._tcp_servers: set[asyncio.Server] = set()
         self._transports: set[BaseTransport] = set()
+        self._ws_servers: set[websockets.asyncio.server.Server] = set()
 
     async def close(self) -> None:
         """
@@ -240,9 +248,13 @@ class TransportLayer:
             await transport.close()
         self._transports.clear()
 
-        for server in set(self._servers):
-            server.close()
-        self._servers.clear()
+        for tcp_server in self._tcp_servers:
+            tcp_server.close()
+        self._tcp_servers.clear()
+
+        for ws_server in self._ws_servers:
+            ws_server.close()
+        self._ws_servers.clear()
 
     async def listen(self, address: TransportAddress) -> None:
         """
@@ -251,7 +263,7 @@ class TransportLayer:
         loop = asyncio.get_running_loop()
 
         if address.protocol == "tcp":
-            server = await loop.create_server(
+            tcp_server = await loop.create_server(
                 lambda: TcpTransport(
                     connect_handler=self._connect_handler,
                     disconnect_handler=self._disconnect_handler,
@@ -260,7 +272,15 @@ class TransportLayer:
                 host=address.host,
                 port=address.port,
             )
-            self._servers.add(server)
+            self._tcp_servers.add(tcp_server)
+        elif address.protocol == "ws":
+            ws_server = await websockets.asyncio.server.serve(
+                self._serve_websocket,
+                address.host,
+                address.port,
+                subprotocols=[SIP_SUBPROTOCOL],
+            )
+            self._ws_servers.add(ws_server)
         else:
             assert address.protocol == "udp"
             await loop.create_datagram_endpoint(
@@ -306,7 +326,7 @@ class TransportLayer:
             ):
                 return transport
 
-        if destination.protocol == "tcp" and self._servers:
+        if destination.protocol == "tcp" and self._tcp_servers:
             loop = asyncio.get_running_loop()
             _transport, protocol = await loop.create_connection(
                 lambda: TcpTransport(
@@ -334,6 +354,22 @@ class TransportLayer:
         self, _transport: BaseTransport, message: sipmessage.Message
     ) -> None:
         self._message_notifier(message)
+
+    async def _serve_websocket(
+        self,
+        websocket: websockets.asyncio.server.ServerConnection,
+    ) -> None:
+        transport = WebsocketTransport(
+            message_handler=self._message_handler,
+            websocket=websocket,
+        )
+        self._connect_handler(transport)
+        try:
+            async for data in websocket:
+                if isinstance(data, bytes):
+                    transport.message_received(data)
+        finally:
+            self._disconnect_handler(transport, None)
 
 
 class TcpTransport(BaseTransport, asyncio.Protocol):
@@ -399,10 +435,8 @@ class TcpTransport(BaseTransport, asyncio.Protocol):
             self._transport.close()
             return
         else:
-            if (
-                isinstance(message, sipmessage.Request)
-                and self.remote_address is not None
-            ):
+            if isinstance(message, sipmessage.Request):
+                assert self.remote_address is not None
                 update_request_via(
                     message, self.remote_address.host, self.remote_address.port
                 )
@@ -471,4 +505,56 @@ class UdpTransport(BaseTransport, asyncio.DatagramProtocol):
         else:
             if isinstance(message, sipmessage.Request):
                 update_request_via(message, addr[0], addr[1])
+            self._message_handler(self, message)
+
+
+class WebsocketTransport(BaseTransport):
+    is_reliable = True
+    uri_transport = "ws"
+    via_transport = "WS"
+
+    def __init__(
+        self,
+        *,
+        message_handler: MessageHandler,
+        websocket: websockets.asyncio.connection.Connection,
+    ) -> None:
+        self._message_handler = message_handler
+        self._websocket = websocket
+        self.remote_address = TransportAddress(
+            protocol="ws",
+            host=websocket.remote_address[0],
+            port=websocket.remote_address[1],
+        )
+        self.via_host = random_string(12) + ".invalid"
+        self.via_port = None
+
+    async def close(self) -> None:
+        await self._websocket.close()
+
+    async def send_message(
+        self, message: sipmessage.Message, destination: TransportAddress
+    ) -> None:
+        message_str = str(message)
+        logger.info("=>\n\n" + message_str)
+
+        await self._websocket.send(message_str.encode("utf-8"))
+
+    # WebSocket.
+
+    def message_received(self, data: bytes) -> None:
+        message_str = data.decode("utf8")
+        logger.info("<=\n\n" + message_str)
+
+        try:
+            message = sipmessage.Message.parse(message_str)
+        except ValueError:
+            # Discard invalid message.
+            return
+        else:
+            if isinstance(message, sipmessage.Request):
+                assert self.remote_address is not None
+                update_request_via(
+                    message, self.remote_address.host, self.remote_address.port
+                )
             self._message_handler(self, message)

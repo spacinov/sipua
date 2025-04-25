@@ -51,8 +51,13 @@ WEBSOCKET_SUBPROTOCOL = typing.cast(websockets.Subprotocol, "sip")
 @dataclasses.dataclass
 class TransportAddress:
     protocol: str
+    'The protocol, e.g. `"udp"`, `"tcp"` or `"ws"`.'
+
     host: str
+    'The transport host, e.g. `"127.0.0.1"`.'
+
     port: int
+    "The transport port, e.g. `5060`."
 
 
 class TransportChannel(abc.ABC):
@@ -245,7 +250,10 @@ def update_request_via(request: sipmessage.Request, host: str, port: int) -> Non
 
 class TransportLayer:
     """
-    SIP transport layer.
+    SIP transport layer which handles the transmission of requests and responses
+    over network transports.
+
+    See :rfc:`3261#section-18`.
     """
 
     def __init__(self) -> None:
@@ -281,7 +289,7 @@ class TransportLayer:
         """
         Create an ACK for the given request and response.
 
-        :rfc:`3261#section-17.1.1.3`
+        See :rfc:`3261#section-17.1.1.3`.
         """
         ack = sipmessage.Request("ACK", request.uri)
         ack.via = [request.via[0]]
@@ -306,7 +314,7 @@ class TransportLayer:
         """
         Create a response for the given request.
 
-        :rfc:`3261#section-8.2.6`
+        See :rfc:`3261#section-8.2.6`.
         """
         if phrase is None:
             phrase = SIP_STATUS_CODES[code]

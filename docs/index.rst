@@ -22,8 +22,8 @@ The ``sipua`` project provides a library for writing SIP user agents in Python.
 API Reference
 -------------
 
-.. automodule:: sipua
-   :members:
-
 .. toctree::
    :maxdepth: 2
+
+   transaction
+   transport

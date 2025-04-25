@@ -1,3 +1,8 @@
+#
+# Copyright (C) Spacinov SAS
+# Distributed under the 2-clause BSD license
+#
+
 import asyncio
 import contextlib
 import dataclasses
@@ -7,9 +12,13 @@ from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
 import sipmessage
+import websockets.asyncio.client
+import websockets.asyncio.connection
 
 from sipua.transport import (
     ANY_HOST,
+    ANY_TRANSPORT,
+    SIP_SUBPROTOCOL,
     TransportAddress,
     TransportLayer,
     get_transport_destination,
@@ -32,7 +41,7 @@ def create_request(
     request = sipmessage.Request(method="OPTIONS", uri=uri)
     request.via = [
         sipmessage.Via(
-            transport="UDP",
+            transport=ANY_TRANSPORT,
             host=ANY_HOST,
             parameters=sipmessage.Parameters(branch="z9hG4bK1e5b2b763d"),
         )
@@ -55,6 +64,23 @@ def create_request(
     return request
 
 
+def create_request_str(
+    *,
+    via_addr: str = "1.2.3.4:12345",
+    via_transport: str,
+) -> str:
+    return lf2crlf(f"""INVITE sip:bob@example.com SIP/2.0
+Via: SIP/2.0/{via_transport} {via_addr};branch=z9hG4bK1e5b2b763d;rport
+Max-Forwards: 70
+To: sip:bob@example.com
+From: sip:alice@example.com;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 OPTIONS
+Content-Length: 0
+
+    """)
+
+
 def create_response(request: sipmessage.Request) -> sipmessage.Response:
     response = sipmessage.Response(200, "OK")
     response.via = request.via
@@ -65,15 +91,28 @@ def create_response(request: sipmessage.Request) -> sipmessage.Response:
     return response
 
 
+def create_response_str(*, via_port: int, via_transport: str) -> str:
+    return lf2crlf(f"""SIP/2.0 200 OK
+Via: SIP/2.0/{via_transport} 127.0.0.1:{via_port};branch=z9hG4bK1e5b2b763d
+To: <sip:bob@example.com>
+From: <sip:alice@example.com>;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 OPTIONS
+Content-Length: 0
+
+""")
+
+
 class TestSocket:
-    port: int
+    local_port: int
+    remote_port: int
 
     def __init__(self, sock: socket.socket) -> None:
         self.local_port = sock.getsockname()[1]
         self.remote_port = sock.getpeername()[1]
         self._sock = sock
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self._sock.close()
 
     async def recv(self) -> bytes:
@@ -81,6 +120,27 @@ class TestSocket:
 
     async def send(self, data: bytes) -> None:
         self._sock.send(data)
+        await asyncio.sleep(0.1)
+
+
+class TestWebsocket:
+    local_port: int
+
+    def __init__(self, sock: websockets.asyncio.connection.Connection) -> None:
+        self.local_port = sock.local_address[1]
+        self.remote_port = sock.remote_address[1]
+        self._sock = sock
+
+    async def close(self) -> None:
+        await self._sock.close()
+
+    async def recv(self) -> bytes:
+        data = await self._sock.recv(decode=False)
+        assert isinstance(data, bytes)
+        return data
+
+    async def send(self, data: bytes) -> None:
+        await self._sock.send(data)
         await asyncio.sleep(0.1)
 
 
@@ -144,18 +204,7 @@ class TcpTransportTest(BaseTestCase):
     async def test_receive_request_send_response(self) -> None:
         async with self.transport_layer_and_socket() as (transport, sock, received):
             # Receive request.
-            await sock.send(
-                lf2crlf("""INVITE sip:bob@example.com SIP/2.0
-Via: SIP/2.0/TCP 1.2.3.4:12345;branch=z9hG4bK1e5b2b763d;rport
-Max-Forwards: 70
-To: sip:bob@example.com
-From: sip:alice@example.com;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 OPTIONS
-Content-Length: 0
-
-    """).encode()
-            )
+            await sock.send(create_request_str(via_transport="TCP").encode())
 
             self.assertEqual(len(received), 1)
             request = received[0]
@@ -239,15 +288,9 @@ Content-Length: 0
 
                 # Receive response.
                 await sock.send(
-                    lf2crlf(f"""SIP/2.0 200 OK
-Via: SIP/2.0/TCP 127.0.0.1:{sock.remote_port};branch=z9hG4bK1e5b2b763d
-To: <sip:bob@example.com>
-From: <sip:alice@example.com>;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 OPTIONS
-Content-Length: 0
-
-""").encode()
+                    create_response_str(
+                        via_port=sock.remote_port, via_transport="TCP"
+                    ).encode()
                 )
 
                 self.assertEqual(len(received), 1)
@@ -256,7 +299,7 @@ Content-Length: 0
                 self.assertEqual(response.code, 200)
                 self.assertEqual(response.phrase, "OK")
 
-                sock.close()
+                await sock.close()
 
 
 class UdpTransportTest(BaseTestCase):
@@ -289,18 +332,7 @@ class UdpTransportTest(BaseTestCase):
     async def test_receive_request_send_response(self) -> None:
         async with self.transport_layer_and_socket() as (transport, sock, received):
             # Receive request.
-            await sock.send(
-                lf2crlf("""INVITE sip:bob@example.com SIP/2.0
-Via: SIP/2.0/UDP 1.2.3.4:12345;branch=z9hG4bK1e5b2b763d;rport
-Max-Forwards: 70
-To: sip:bob@example.com
-From: sip:alice@example.com;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 OPTIONS
-Content-Length: 0
-
-""").encode()
-            )
+            await sock.send(create_request_str(via_transport="UDP").encode())
 
             self.assertEqual(len(received), 1)
             request = received[0]
@@ -374,15 +406,130 @@ Content-Length: 0
 
             # Receive response.
             await sock.send(
-                lf2crlf("""SIP/2.0 200 OK
-Via: SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bK1e5b2b763d
+                create_response_str(via_port=5060, via_transport="UDP").encode()
+            )
+
+            self.assertEqual(len(received), 1)
+            response = received[0]
+            assert isinstance(response, sipmessage.Response)
+            self.assertEqual(response.code, 200)
+            self.assertEqual(response.phrase, "OK")
+
+
+class WebsocketTransportTest(BaseTestCase):
+    @contextlib.asynccontextmanager
+    async def transport_layer_and_socket(
+        self,
+    ) -> AsyncGenerator[
+        tuple[
+            TransportLayer,
+            TestWebsocket,
+            list[sipmessage.Message],
+        ],
+        None,
+    ]:
+        async with self.transport_layer(
+            [TransportAddress(protocol="ws", host="127.0.0.1", port=5080)]
+        ) as (transport, received):
+            async with websockets.asyncio.client.connect(
+                "ws://127.0.0.1:5080", subprotocols=[SIP_SUBPROTOCOL]
+            ) as websocket:
+                yield (transport, TestWebsocket(websocket), received)
+
+    @asynctest
+    async def test_receive_garbage(self) -> None:
+        async with self.transport_layer_and_socket() as (transport, sock, received):
+            await sock.send(b"garbage")
+
+            # Check no message was received.
+            self.assertEqual(received, [])
+
+            # Check the connection was not closed.
+            self.assertEqual(len(transport._transports), 1)
+
+    @asynctest
+    async def test_receive_request_send_response(self) -> None:
+        async with self.transport_layer_and_socket() as (transport, sock, received):
+            # Receive request.
+            await sock.send(
+                create_request_str(
+                    via_addr="li62vs2t75f6.invalid", via_transport="WS"
+                ).encode()
+            )
+
+            self.assertEqual(len(received), 1)
+            request = received[0]
+            assert isinstance(request, sipmessage.Request)
+            self.assertEqual(request.method, "INVITE")
+            self.assertEqual(
+                request.uri,
+                sipmessage.URI(
+                    scheme="sip",
+                    host="example.com",
+                    user="bob",
+                ),
+            )
+            self.assertEqual(
+                request.via,
+                [
+                    sipmessage.Via(
+                        transport="WS",
+                        host="li62vs2t75f6.invalid",
+                        parameters=sipmessage.Parameters(
+                            branch="z9hG4bK1e5b2b763d",
+                            rport=str(sock.local_port),
+                            received="127.0.0.1",
+                        ),
+                    )
+                ],
+            )
+
+            # Send response.
+            response = create_response(request)
+            is_reliable = await transport.send_message(response)
+            self.assertTrue(is_reliable)
+
+            data = await sock.recv()
+            self.assertEqual(
+                data,
+                lf2crlf(f"""SIP/2.0 200 OK
+Via: SIP/2.0/WS li62vs2t75f6.invalid;branch=z9hG4bK1e5b2b763d;rport={sock.local_port};received=127.0.0.1
 To: <sip:bob@example.com>
 From: <sip:alice@example.com>;tag=7bc759c98ae3e112
 Call-ID: 126a8db08eba7fb6
 CSeq: 1 OPTIONS
 Content-Length: 0
 
-""").encode()
+""").encode(),
+            )
+
+    @asynctest
+    @patch("sipua.transport.random_string", new=lambda x: "WeNzcJ9a6ATr")  # type: ignore
+    async def test_send_request_and_receive_response(self) -> None:
+        async with self.transport_layer_and_socket() as (transport, sock, received):
+            # Send request.
+            request = create_request(uri_port=sock.local_port, uri_transport="ws")
+            await transport.send_message(request)
+
+            data = await sock.recv()
+            self.assertEqual(
+                data,
+                lf2crlf(f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port};transport=ws SIP/2.0
+Via: SIP/2.0/WS WeNzcJ9a6ATr.invalid;branch=z9hG4bK1e5b2b763d
+Max-Forwards: 70
+To: <sip:bob@example.com>
+From: <sip:alice@example.com>;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 OPTIONS
+Contact: <sip:WeNzcJ9a6ATr.invalid;transport=ws>
+Content-Length: 0
+
+""").encode(),
+            )
+
+            # Receive response.
+            await sock.send(
+                create_response_str(via_port=5060, via_transport="UDP").encode()
             )
 
             self.assertEqual(len(received), 1)

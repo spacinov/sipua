@@ -386,7 +386,7 @@ class TransportLayer:
             assert channel in self._channels
             return channel
 
-        raise RuntimeError("No suitable transport found")
+        raise ConnectionError("No suitable transport found")
 
     async def _handle_message(self, message: sipmessage.Message) -> None:
         if isinstance(message, sipmessage.Request) and self.request_handler is not None:

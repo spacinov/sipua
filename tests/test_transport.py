@@ -187,7 +187,7 @@ CSeq: 1 INVITE
     async def test_send_request(self) -> None:
         async with self.transport_layer([]) as (transport, _received):
             request = create_request(uri_port=1234)
-            with self.assertRaises(RuntimeError) as cm:
+            with self.assertRaises(ConnectionError) as cm:
                 await transport.send_message(request)
             self.assertEqual(str(cm.exception), "No suitable transport found")
 
@@ -318,6 +318,18 @@ Content-Length: 0
                 self.assertEqual(response.phrase, "OK")
 
                 await sock.close()
+
+    @asynctest
+    async def test_connect_fails(self) -> None:
+        async with (
+            self.transport_layer(
+                [TransportAddress(protocol="tcp", host="127.0.0.1", port=5060)]
+            ) as (transport, received),
+        ):
+            # Client sends request.
+            request = create_request(uri_port=5080, uri_transport="tcp")
+            with self.assertRaises(ConnectionRefusedError):
+                await transport.send_message(request)
 
 
 class UdpTransportChannelTest(BaseTestCase):

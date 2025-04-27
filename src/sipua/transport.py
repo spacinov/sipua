@@ -395,6 +395,13 @@ class TransportLayer:
             isinstance(message, sipmessage.Response)
             and self.response_handler is not None
         ):
+            # Check there is exactly one Via header, otherwise drop the response.
+            #
+            # https://datatracker.ietf.org/doc/html/rfc3261#section-8.1.3.3
+            via_count = len(message.via)
+            if via_count != 1:
+                logger.warning(f"Expected exactly one Via header, got {via_count}")
+                return
             await self.response_handler(message)
 
     def _connect_handler(self, channel: TransportChannel) -> None:

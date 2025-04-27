@@ -27,3 +27,4 @@ API Reference
 
    transaction
    transport
+   utils

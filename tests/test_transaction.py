@@ -22,13 +22,8 @@ from sipua.transaction import (
     TransactionState,
     get_transaction_key,
 )
-from sipua.transport import (
-    ANY_HOST,
-    ANY_PORT,
-    TransportAddress,
-    TransportChannel,
-    TransportLayer,
-)
+from sipua.transport import TransportAddress, TransportChannel, TransportLayer
+from sipua.utils import ANY_HOST, ANY_PORT, create_response
 
 from .utils import asynctest
 
@@ -138,8 +133,8 @@ class ClientInviteTransactionTest(BaseTestCase):
     @asynctest
     async def test_response_200(self) -> None:
         request = create_request("INVITE")
-        response_100 = self.transport.create_response(request=request, code=100)
-        response_200 = self.transport.create_response(request=request, code=200)
+        response_100 = create_response(request=request, code=100)
+        response_200 = create_response(request=request, code=200)
 
         transaction = self.create_transaction(request)
 
@@ -155,7 +150,7 @@ class ClientInviteTransactionTest(BaseTestCase):
     @shorten_timers
     async def test_response_404(self) -> None:
         request = create_request("INVITE")
-        response_404 = self.transport.create_response(request=request, code=404)
+        response_404 = create_response(request=request, code=404)
 
         transaction = self.create_transaction(request)
 
@@ -202,8 +197,8 @@ class ClientNonInviteTransactionTest(BaseTestCase):
     @asynctest
     async def test_response_200(self) -> None:
         request = create_request("REGISTER")
-        response_100 = self.transport.create_response(request=request, code=100)
-        response_200 = self.transport.create_response(request=request, code=200)
+        response_100 = create_response(request=request, code=100)
+        response_200 = create_response(request=request, code=200)
 
         transaction = self.create_transaction(request)
 
@@ -219,7 +214,7 @@ class ClientNonInviteTransactionTest(BaseTestCase):
     @shorten_timers
     async def test_response_404(self) -> None:
         request = create_request("REGISTER")
-        response_404 = self.transport.create_response(request=request, code=404)
+        response_404 = create_response(request=request, code=404)
 
         transaction = self.create_transaction(request)
 
@@ -282,7 +277,7 @@ class ServerInviteTransactionTest(BaseTestCase):
         request = create_request("INVITE")
         transaction = await self.create_transaction(request)
 
-        response = self.transport.create_response(request=request, code=200)
+        response = create_response(request=request, code=200)
         await transaction.send_response(response)
         self.assertEqual(transaction._state, TransactionState.Terminated)
 
@@ -298,7 +293,7 @@ class ServerInviteTransactionTest(BaseTestCase):
         request = create_request("INVITE")
         transaction = await self.create_transaction(request)
 
-        response = self.transport.create_response(request=request, code=404)
+        response = create_response(request=request, code=404)
         await transaction.send_response(response)
         self.assertEqual(transaction._state, TransactionState.Completed)
 
@@ -318,7 +313,7 @@ class ServerInviteTransactionTest(BaseTestCase):
         request = create_request("INVITE")
         transaction = await self.create_transaction(request)
 
-        response = self.transport.create_response(request=request, code=404)
+        response = create_response(request=request, code=404)
         await transaction.send_response(response)
         self.assertEqual(transaction._state, TransactionState.Completed)
 
@@ -350,11 +345,11 @@ class ServerNonInviteTransactionTest(BaseTestCase):
         request = create_request("REGISTER")
         transaction = await self.create_transaction(request)
 
-        response = self.transport.create_response(request=request, code=100)
+        response = create_response(request=request, code=100)
         await transaction.send_response(response)
         self.assertEqual(transaction._state, TransactionState.Proceeding)
 
-        response = self.transport.create_response(request=request, code=200)
+        response = create_response(request=request, code=200)
         await transaction.send_response(response)
         self.assertEqual(transaction._state, TransactionState.Completed)
 
@@ -370,7 +365,7 @@ class ServerNonInviteTransactionTest(BaseTestCase):
         request = create_request("REGISTER")
         transaction = await self.create_transaction(request)
 
-        response = self.transport.create_response(request=request, code=200)
+        response = create_response(request=request, code=200)
         await transaction.send_response(response)
         self.assertEqual(transaction._state, TransactionState.Completed)
 
@@ -403,9 +398,7 @@ class EndToEndTest(unittest.TestCase):
     @asynctest
     async def test_invite(self) -> None:
         async def reply_to_invite(transaction: ServerInviteTransaction) -> None:
-            response = transaction.transport_layer.create_response(
-                request=transaction.request, code=200
-            )
+            response = create_response(request=transaction.request, code=200)
             await transaction.send_response(response)
 
         async with self.client_and_server() as (client_transaction, server_transaction):
@@ -420,9 +413,7 @@ class EndToEndTest(unittest.TestCase):
         async def reply_to_register(
             transaction: ServerNonInviteTransaction,
         ) -> None:
-            response = transaction.transport_layer.create_response(
-                request=transaction.request, code=200
-            )
+            response = create_response(request=transaction.request, code=200)
             await transaction.send_response(response)
 
         async with self.client_and_server() as (client_transaction, server_transaction):

@@ -124,12 +124,8 @@ class TransactionLayer:
         transport_layer.request_handler = self._receive_request
         transport_layer.response_handler = self._receive_response
 
-        self._client_transactions: dict[
-            TransactionKey, ClientInviteTransaction | ClientNonInviteTransaction
-        ] = {}
-        self._server_transactions: dict[
-            TransactionKey, ServerInviteTransaction | ServerNonInviteTransaction
-        ] = {}
+        self._client_transactions: dict[TransactionKey, ClientTransaction] = {}
+        self._server_transactions: dict[TransactionKey, ServerTransaction] = {}
         self._transport_layer = transport_layer
 
         #: A coroutine which will be called whenever a new INVITE transaction
@@ -489,3 +485,7 @@ class ServerNonInviteTransaction(Transaction):
         """
         if self._state == TransactionState.Completed:
             self._set_state(TransactionState.Terminated)
+
+
+ClientTransaction = ClientInviteTransaction | ClientNonInviteTransaction
+ServerTransaction = ServerInviteTransaction | ServerNonInviteTransaction

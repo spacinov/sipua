@@ -22,34 +22,52 @@ T4 = 5
 # Timer "D" is not defined relative to T1.
 TIMER_D = 32
 
-TransactionKey = tuple[str, str]
+ClientTransactionKey = tuple[str, str]
+ServerTransactionKey = tuple[str, str, str]
 
 # Public handlers.
-InviteTransactionHandler = typing.Callable[
-    ["ServerInviteTransaction"],
-    typing.Coroutine[None, None, None],
-]
-NonInviteTransactionHandler = typing.Callable[
-    ["ServerNonInviteTransaction"],
+TransactionHandler = typing.Callable[
+    ["ServerTransaction"],
     typing.Coroutine[None, None, None],
 ]
 
 
-def get_transaction_key(message: sipmessage.Message) -> TransactionKey:
+def get_client_transaction_key(message: sipmessage.Message) -> ClientTransactionKey:
     """
-    Get the key used to match:
+    Get the key used to match responses to client transactions.
 
-    - Responses to client transactions :rfc:`3261#section-17.1.3`
-    - Requests to server transactions :rfc:`3261#section-17.2.3`
+    See :rfc:`3261#section-17.1.3`.
     """
     branch = message.via[0].parameters.get("branch")
     assert branch is not None, "Via branch must be defined for a transaction"
 
-    if isinstance(message, sipmessage.Request) and message.method == "ACK":
-        method = "INVITE"
+    if isinstance(message, sipmessage.Request):
+        method = message.method
     else:
         method = message.cseq.method
+
     return (branch, method)
+
+
+def get_server_transaction_key(request: sipmessage.Request) -> ServerTransactionKey:
+    """
+    Get the key used to match requests to server transactions.
+
+    See :rfc:`3261#section-17.2.3`.
+    """
+    branch = request.via[0].parameters.get("branch")
+    assert branch is not None, "Via branch must be defined for a transaction"
+
+    sent_by = request.via[0].host
+    if request.via[0].port is not None:
+        sent_by += f":{request.via[0].port}"
+
+    if request.method == "ACK":
+        method = "INVITE"
+    else:
+        method = request.method
+
+    return (branch, sent_by, method)
 
 
 class TransactionState(enum.Enum):
@@ -73,6 +91,7 @@ class Transaction:
         self._request = request
         self._state = state
         self._transaction_layer = transaction_layer
+        self._transport_layer = transaction_layer._transport_layer
 
     @property
     def request(self) -> sipmessage.Request:
@@ -80,13 +99,6 @@ class Transaction:
         The request which created the transaction.
         """
         return self._request
-
-    @property
-    def transport_layer(self) -> TransportLayer:
-        """
-        The transport layer associated with the transaction.
-        """
-        return self._transaction_layer._transport_layer
 
     def _log_info(self, msg: str, *args: object) -> None:
         logger.info(
@@ -124,23 +136,18 @@ class TransactionLayer:
         transport_layer.request_handler = self._receive_request
         transport_layer.response_handler = self._receive_response
 
-        self._client_transactions: dict[TransactionKey, ClientTransaction] = {}
-        self._server_transactions: dict[TransactionKey, ServerTransaction] = {}
+        self._client_transactions: dict[ClientTransactionKey, ClientTransaction] = {}
+        self._server_transactions: dict[ServerTransactionKey, ServerTransaction] = {}
         self._transport_layer = transport_layer
 
-        #: A coroutine which will be called whenever a new INVITE transaction
-        #: is received.
-        self.invite_transaction_handler: InviteTransactionHandler | None = None
-
-        #: A coroutine which will be called whenever a new non-INVITE transaction
-        #: is received.
-        self.non_invite_transaction_handler: NonInviteTransactionHandler | None = None
+        #: A coroutine which will be called whenever a new transaction is received.
+        self.transaction_handler: TransactionHandler | None = None
 
     async def request(self, request: sipmessage.Request) -> sipmessage.Response:
         """
         Send a request in a transaction and return the final response.
         """
-        key = get_transaction_key(request)
+        key = get_client_transaction_key(request)
         transaction: ClientInviteTransaction | ClientNonInviteTransaction
         if request.method == "INVITE":
             transaction = ClientInviteTransaction(
@@ -156,10 +163,14 @@ class TransactionLayer:
 
     async def _receive_request(self, request: sipmessage.Request) -> None:
         # Try matching the request to a server transaction.
-        key = get_transaction_key(request)
+        key = get_server_transaction_key(request)
         transaction = self._server_transactions.get(key)
         if transaction is not None:
             await transaction._receive_request(request)
+            return
+        elif request.method == "ACK":
+            # An un-matched ACK means the transaction has
+            # already been terminated.
             return
 
         # Create a new server transaction.
@@ -175,34 +186,27 @@ class TransactionLayer:
         await transaction._receive_request(request)
 
         # Notify the transaction user.
-        if (
-            isinstance(transaction, ServerInviteTransaction)
-            and self.invite_transaction_handler is not None
-        ):
-            await self.invite_transaction_handler(transaction)
-        elif (
-            isinstance(transaction, ServerNonInviteTransaction)
-            and self.non_invite_transaction_handler is not None
-        ):
-            await self.non_invite_transaction_handler(transaction)
+        if self.transaction_handler is not None:
+            await self.transaction_handler(transaction)
 
     async def _receive_response(self, response: sipmessage.Response) -> None:
         # Try matching the response to a client transaction.
-        key = get_transaction_key(response)
+        key = get_client_transaction_key(response)
         transaction = self._client_transactions.get(key)
         if transaction is not None:
             await transaction.receive_response(response)
 
     def _transaction_terminated(self, transaction: Transaction) -> None:
-        key = get_transaction_key(transaction._request)
         if isinstance(
             transaction, (ClientInviteTransaction, ClientNonInviteTransaction)
         ):
-            self._client_transactions.pop(key)
+            server_key = get_client_transaction_key(transaction._request)
+            self._client_transactions.pop(server_key)
         elif isinstance(
             transaction, (ServerInviteTransaction, ServerNonInviteTransaction)
         ):
-            self._server_transactions.pop(key)
+            client_key = get_server_transaction_key(transaction._request)
+            self._server_transactions.pop(client_key)
 
 
 class ClientInviteTransaction(Transaction):
@@ -233,14 +237,14 @@ class ClientInviteTransaction(Transaction):
             elif response.code >= 200 and response.code < 300:
                 # Send ACK.
                 ack = create_ack(request=self._request, response=response)
-                await self.transport_layer.send_message(ack)
+                await self._transport_layer.send_message(ack)
 
                 self._set_state(TransactionState.Terminated)
                 self._future.set_result(response)
             elif response.code >= 300 and response.code < 700:
                 # Send ACK.
                 ack = create_ack(request=self._request, response=response)
-                await self.transport_layer.send_message(ack)
+                await self._transport_layer.send_message(ack)
 
                 self._set_state(TransactionState.Completed)
                 self._future.set_result(response)
@@ -253,7 +257,7 @@ class ClientInviteTransaction(Transaction):
         :class:`TimeoutError` is raised.
         """
 
-        self._is_reliable = await self.transport_layer.send_message(self._request)
+        self._is_reliable = await self._transport_layer.send_message(self._request)
         self._start_timer("B", 64 * T1)
 
         # For unreliable transports, schedule retransmission.
@@ -270,7 +274,7 @@ class ClientInviteTransaction(Transaction):
         This is only used for unreliable transports.
         """
         if self._state == TransactionState.Calling:
-            asyncio.ensure_future(self.transport_layer.send_message(self._request))
+            asyncio.ensure_future(self._transport_layer.send_message(self._request))
             self.__timer_a_value *= 2
             self._start_timer("A", self.__timer_a_value)
 
@@ -327,7 +331,7 @@ class ClientNonInviteTransaction(Transaction):
         Send the request and return the response. If no response is received, a
         :class:`TimeoutError` is raised.
         """
-        self._is_reliable = await self.transport_layer.send_message(self._request)
+        self._is_reliable = await self._transport_layer.send_message(self._request)
         self._start_timer("F", 64 * T1)
 
         # For unreliable transports, schedule retransmission.
@@ -344,7 +348,7 @@ class ClientNonInviteTransaction(Transaction):
         This is only used for unreliable transports.
         """
         if self._state == TransactionState.Trying:
-            asyncio.ensure_future(self.transport_layer.send_message(self._request))
+            asyncio.ensure_future(self._transport_layer.send_message(self._request))
             self.__timer_e_value = min(2 * self.__timer_e_value, T2)
             self._start_timer("E", self.__timer_e_value)
 
@@ -388,12 +392,12 @@ class ServerInviteTransaction(Transaction):
         """
         if self._state == TransactionState.Proceeding:
             if response.code >= 100 and response.code < 200:
-                self._is_reliable = await self.transport_layer.send_message(response)
+                self._is_reliable = await self._transport_layer.send_message(response)
             elif response.code >= 200 and response.code < 300:
-                self._is_reliable = await self.transport_layer.send_message(response)
+                self._is_reliable = await self._transport_layer.send_message(response)
                 self._set_state(TransactionState.Terminated)
             elif response.code >= 300 and response.code < 700:
-                self._is_reliable = await self.transport_layer.send_message(response)
+                self._is_reliable = await self._transport_layer.send_message(response)
                 self._set_state(TransactionState.Completed)
                 self._start_timer("H", 64 * T1)
 
@@ -423,7 +427,7 @@ class ServerInviteTransaction(Transaction):
         This is only used for unreliable transports.
         """
         if self._state == TransactionState.Completed:
-            asyncio.ensure_future(self.transport_layer.send_message(self.response))
+            asyncio.ensure_future(self._transport_layer.send_message(self.response))
             self.__timer_g_value = min(2 * self.__timer_g_value, T2)
             self._start_timer("G", self.__timer_g_value)
 
@@ -465,10 +469,10 @@ class ServerNonInviteTransaction(Transaction):
         """
         if self._state in (TransactionState.Trying, TransactionState.Proceeding):
             if response.code >= 100 and response.code < 200:
-                self._is_reliable = await self.transport_layer.send_message(response)
+                self._is_reliable = await self._transport_layer.send_message(response)
                 self._set_state(TransactionState.Proceeding)
             elif response.code >= 200 and response.code < 700:
-                self._is_reliable = await self.transport_layer.send_message(response)
+                self._is_reliable = await self._transport_layer.send_message(response)
                 self._set_state(TransactionState.Completed)
 
                 self._start_timer("J", not self._is_reliable and 64 * T1 or 0)

@@ -18,9 +18,10 @@ from sipua.transaction import (
     ClientNonInviteTransaction,
     ServerInviteTransaction,
     ServerNonInviteTransaction,
+    ServerTransaction,
     TransactionLayer,
     TransactionState,
-    get_transaction_key,
+    get_client_transaction_key,
 )
 from sipua.transport import TransportAddress, TransportChannel, TransportLayer
 from sipua.utils import ANY_HOST, ANY_PORT, create_response
@@ -125,9 +126,8 @@ class ClientInviteTransactionTest(BaseTestCase):
             request=request, transaction_layer=self.transaction_layer
         )
         self.assertEqual(transaction._state, TransactionState.Calling)
-        self.transaction_layer._client_transactions[get_transaction_key(request)] = (
-            transaction
-        )
+        key = get_client_transaction_key(request)
+        self.transaction_layer._client_transactions[key] = transaction
         return transaction
 
     @asynctest
@@ -189,9 +189,8 @@ class ClientNonInviteTransactionTest(BaseTestCase):
             request=request, transaction_layer=self.transaction_layer
         )
         self.assertEqual(transaction._state, TransactionState.Trying)
-        self.transaction_layer._client_transactions[get_transaction_key(request)] = (
-            transaction
-        )
+        key = get_client_transaction_key(request)
+        self.transaction_layer._client_transactions[key] = transaction
         return transaction
 
     @asynctest
@@ -397,12 +396,13 @@ class EndToEndTest(unittest.TestCase):
 
     @asynctest
     async def test_invite(self) -> None:
-        async def reply_to_invite(transaction: ServerInviteTransaction) -> None:
-            response = create_response(request=transaction.request, code=200)
-            await transaction.send_response(response)
+        async def reply_to_invite(transaction: ServerTransaction) -> None:
+            if transaction.request.method == "INVITE":
+                response = create_response(request=transaction.request, code=200)
+                await transaction.send_response(response)
 
         async with self.client_and_server() as (client_transaction, server_transaction):
-            server_transaction.invite_transaction_handler = reply_to_invite
+            server_transaction.transaction_handler = reply_to_invite
 
             request = create_request("INVITE")
             response = await client_transaction.request(request)
@@ -410,14 +410,13 @@ class EndToEndTest(unittest.TestCase):
 
     @asynctest
     async def test_register(self) -> None:
-        async def reply_to_register(
-            transaction: ServerNonInviteTransaction,
-        ) -> None:
-            response = create_response(request=transaction.request, code=200)
-            await transaction.send_response(response)
+        async def reply_to_register(transaction: ServerTransaction) -> None:
+            if transaction.request.method == "REGISTER":
+                response = create_response(request=transaction.request, code=200)
+                await transaction.send_response(response)
 
         async with self.client_and_server() as (client_transaction, server_transaction):
-            server_transaction.non_invite_transaction_handler = reply_to_register
+            server_transaction.transaction_handler = reply_to_register
 
             request = create_request("REGISTER")
             response = await client_transaction.request(request)

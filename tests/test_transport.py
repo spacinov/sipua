@@ -16,16 +16,15 @@ import websockets.asyncio.client
 import websockets.asyncio.connection
 
 from sipua.transport import (
-    ANY_HOST,
-    ANY_TRANSPORT,
     WEBSOCKET_SUBPROTOCOL,
     TransportAddress,
     TransportLayer,
     get_transport_destination,
     update_request_via,
 )
+from sipua.utils import create_contact, create_response, create_via
 
-from .utils import asynctest, lf2crlf, parse_request
+from .utils import asynctest, lf2crlf
 
 
 def create_request(
@@ -39,13 +38,8 @@ def create_request(
             uri, parameters=sipmessage.Parameters(transport=uri_transport)
         )
     request = sipmessage.Request(method="OPTIONS", uri=uri)
-    request.via = [
-        sipmessage.Via(
-            transport=ANY_TRANSPORT,
-            host=ANY_HOST,
-            parameters=sipmessage.Parameters(branch="z9hG4bK1e5b2b763d"),
-        )
-    ]
+    with patch("sipua.utils.random_string", new=lambda x: "1e5b2b763d"):
+        request.via = [create_via()]
     request.max_forwards = 70
     request.to_address = sipmessage.Address.parse("sip:bob@example.com")
     request.from_address = sipmessage.Address.parse(
@@ -53,14 +47,7 @@ def create_request(
     )
     request.call_id = "126a8db08eba7fb6"
     request.cseq = sipmessage.CSeq(1, "OPTIONS")
-    request.contact = [
-        sipmessage.Address(
-            uri=sipmessage.URI(
-                scheme="sip",
-                host=ANY_HOST,
-            )
-        )
-    ]
+    request.contact = [create_contact()]
     return request
 
 
@@ -230,7 +217,7 @@ class TcpTransportChannelTest(BaseTestCase):
             )
 
             # Send response.
-            response = transport.create_response(request=request, code=200)
+            response = create_response(request=request, code=200)
             is_reliable = await transport.send_message(response)
             self.assertTrue(is_reliable)
 
@@ -358,7 +345,7 @@ class UdpTransportChannelTest(BaseTestCase):
             )
 
             # Send response.
-            response = transport.create_response(request=request, code=200)
+            response = create_response(request=request, code=200)
             is_reliable = await transport.send_message(response)
             self.assertFalse(is_reliable)
 
@@ -480,7 +467,7 @@ class WebsocketTransportChannelTest(BaseTestCase):
             )
 
             # Send response.
-            response = transport.create_response(request=request, code=200)
+            response = create_response(request=request, code=200)
             is_reliable = await transport.send_message(response)
             self.assertTrue(is_reliable)
 
@@ -532,101 +519,6 @@ Content-Length: 0
             assert isinstance(response, sipmessage.Response)
             self.assertEqual(response.code, 200)
             self.assertEqual(response.phrase, "OK")
-
-
-class CreateResponseAndAckTest(BaseTestCase):
-    def test_create_invite_response_and_ack(self) -> None:
-        transport = TransportLayer()
-        request = parse_request("""INVITE sip:+33233445566@127.0.0.1:5060 SIP/2.0
-Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
-Max-Forwards: 70
-To: sip:+33233445566@127.0.0.1:5060
-From: sip:+33122334455@127.0.0.1:43248;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 INVITE
-Content-Type: application/sdp
-Content-Length: 235
-
-v=0
-o=- 1695503748 1695503748 IN IP4 127.0.0.1
-s=-
-c=IN IP4 127.0.0.1
-t=0 0
-m=audio 57299 RTP/AVP 0 8 101
-a=rtpmap:0 PCMU/8000
-a=rtpmap:8 PCMA/8000
-a=rtpmap:101 telephone-event/8000
-a=fmtp:101 0-15
-a=silenceSupp:off - - - -
-""")
-
-        response = transport.create_response(request=request, code=200)
-        self.assertMessage(
-            response,
-            """SIP/2.0 200 OK
-Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
-To: <sip:+33233445566@127.0.0.1:5060>
-From: <sip:+33122334455@127.0.0.1:43248>;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 INVITE
-
-""",
-        )
-
-        ack = transport.create_ack(request=request, response=response)
-        self.assertMessage(
-            ack,
-            """ACK sip:+33233445566@127.0.0.1:5060 SIP/2.0
-Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
-To: <sip:+33233445566@127.0.0.1:5060>
-From: <sip:+33122334455@127.0.0.1:43248>;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 ACK
-
-""",
-        )
-
-    def test_create_invite_response_with_record_route(self) -> None:
-        transport = TransportLayer()
-        request = parse_request("""INVITE sip:callee@u2.domain.com SIP/2.0
-Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
-Max-Forwards: 70
-To: sip:callee@127.0.0.1:5060
-From: sip:+caller@127.0.0.1:43248;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-Contact: sip:caller@u1.example.com
-CSeq: 1 INVITE
-Content-Type: application/sdp
-Record-Route: <sip:p2.domain.com;lr>
-Record-Route: <sip:p1.example.com;lr>
-
-v=0
-o=- 1695503748 1695503748 IN IP4 127.0.0.1
-s=-
-c=IN IP4 127.0.0.1
-t=0 0
-m=audio 57299 RTP/AVP 0 8 101
-a=rtpmap:0 PCMU/8000
-a=rtpmap:8 PCMA/8000
-a=rtpmap:101 telephone-event/8000
-a=fmtp:101 0-15
-a=silenceSupp:off - - - -
-
-""")
-        response = transport.create_response(request=request, code=200)
-        self.assertMessage(
-            response,
-            """SIP/2.0 200 OK
-Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
-To: <sip:callee@127.0.0.1:5060>
-From: <sip:+caller@127.0.0.1:43248>;tag=7bc759c98ae3e112
-Call-ID: 126a8db08eba7fb6
-CSeq: 1 INVITE
-Record-Route: <sip:p2.domain.com;lr>
-Record-Route: <sip:p1.example.com;lr>
-
-""",
-        )
 
 
 class GetTransportDestinationTest(unittest.TestCase):

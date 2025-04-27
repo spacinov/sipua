@@ -15,7 +15,7 @@ import sipmessage
 import websockets.asyncio.connection
 import websockets.asyncio.server
 
-from .utils import random_string, response_establishes_dialog
+from .utils import ANY_HOST, ANY_PORT, random_string
 
 logger = logging.getLogger(__name__)
 
@@ -31,19 +31,6 @@ RequestHandler = typing.Callable[
 ResponseHandler = typing.Callable[
     [sipmessage.Response], typing.Coroutine[None, None, None]
 ]
-
-ANY_HOST = "any"
-ANY_PORT = 0
-ANY_TRANSPORT = "ANY"
-
-SIP_STATUS_CODES = {
-    100: "Trying",
-    200: "OK",
-    400: "Bad Request",
-    401: "Unauthorized",
-    404: "Not Found",
-    407: "Proxy Authentication Required",
-}
 
 WEBSOCKET_SUBPROTOCOL = typing.cast(websockets.Subprotocol, "sip")
 
@@ -282,57 +269,6 @@ class TransportLayer:
         for ws_server in self._ws_servers:
             ws_server.close()
         self._ws_servers.clear()
-
-    def create_ack(
-        self, *, request: sipmessage.Request, response: sipmessage.Response
-    ) -> sipmessage.Request:
-        """
-        Create an ACK for the given request and response.
-
-        See :rfc:`3261#section-17.1.1.3`.
-        """
-        ack = sipmessage.Request("ACK", request.uri)
-        ack.via = [request.via[0]]
-        ack.to_address = response.to_address
-        ack.from_address = request.from_address
-        ack.call_id = request.call_id
-        ack.cseq = sipmessage.CSeq(sequence=request.cseq.sequence, method="ACK")
-
-        ack.authorization = request.authorization
-        ack.proxy_authorization = request.proxy_authorization
-        ack.route = list(reversed(response.record_route))
-
-        return ack
-
-    def create_response(
-        self,
-        *,
-        request: sipmessage.Request,
-        code: int,
-        phrase: str | None = None,
-    ) -> sipmessage.Response:
-        """
-        Create a response for the given request.
-
-        See :rfc:`3261#section-8.2.6`.
-        """
-        if phrase is None:
-            phrase = SIP_STATUS_CODES[code]
-        response = sipmessage.Response(code, phrase)
-        response.via = request.via
-        response.to_address = request.to_address
-        response.from_address = request.from_address
-        response.call_id = request.call_id
-        response.cseq = request.cseq
-
-        # Copy the Record-Route headers from the request if the response
-        # establishes a dialog.
-        #
-        # https://datatracker.ietf.org/doc/html/rfc3261#section-12.1.1
-        if response_establishes_dialog(request.method, code):
-            response.record_route = request.record_route
-
-        return response
 
     async def listen(self, address: TransportAddress) -> None:
         """

@@ -11,6 +11,7 @@ import typing
 import sipmessage
 
 from .transport import TransportLayer
+from .utils import create_ack, create_response
 
 logger = logging.getLogger(__name__)
 
@@ -235,18 +236,14 @@ class ClientInviteTransaction(Transaction):
                 self._set_state(TransactionState.Proceeding)
             elif response.code >= 200 and response.code < 300:
                 # Send ACK.
-                ack = self.transport_layer.create_ack(
-                    request=self._request, response=response
-                )
+                ack = create_ack(request=self._request, response=response)
                 await self.transport_layer.send_message(ack)
 
                 self._set_state(TransactionState.Terminated)
                 self._future.set_result(response)
             elif response.code >= 300 and response.code < 700:
                 # Send ACK.
-                ack = self.transport_layer.create_ack(
-                    request=self._request, response=response
-                )
+                ack = create_ack(request=self._request, response=response)
                 await self.transport_layer.send_message(ack)
 
                 self._set_state(TransactionState.Completed)
@@ -415,7 +412,7 @@ class ServerInviteTransaction(Transaction):
         Handle a request from the transport layer.
         """
         if self._state == TransactionState.Proceeding and request.method == "INVITE":
-            response = self.transport_layer.create_response(request=request, code=100)
+            response = create_response(request=request, code=100)
             await self.send_response(response)
         elif self._state == TransactionState.Completed and request.method == "ACK":
             self._set_state(TransactionState.Confirmed)

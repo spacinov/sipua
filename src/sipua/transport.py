@@ -12,6 +12,7 @@ import socket
 import typing
 
 import sipmessage
+import websockets.asyncio.client
 import websockets.asyncio.connection
 import websockets.asyncio.server
 
@@ -202,7 +203,9 @@ def set_transport_source(
         message.contact = contacts
 
 
-def update_request_via(request: sipmessage.Request, host: str, port: int) -> None:
+def update_request_via(
+    request: sipmessage.Request, host: str, port: int, force: bool = False
+) -> None:
     """
     Update the top-most `Via` header based on the IP address and port
     from which the request was received.
@@ -215,7 +218,7 @@ def update_request_via(request: sipmessage.Request, host: str, port: int) -> Non
         # not match the IP address from which the request was received.
         #
         # https://datatracker.ietf.org/doc/html/rfc3261#section-18.2.1
-        if via.host != host:
+        if force or via.host != host:
             via = dataclasses.replace(
                 via, parameters=via.parameters.replace(received=host)
             )
@@ -225,7 +228,7 @@ def update_request_via(request: sipmessage.Request, host: str, port: int) -> Non
         # the `rport` parameter to the port from which the request was received.
         #
         # https://datatracker.ietf.org/doc/html/rfc3581#section-4
-        if "rport" in via.parameters and via.parameters["rport"] is None:
+        if force or ("rport" in via.parameters and via.parameters["rport"] is None):
             via = dataclasses.replace(
                 via, parameters=via.parameters.replace(rport=str(port))
             )
@@ -246,6 +249,7 @@ class TransportLayer:
     def __init__(self) -> None:
         self._channels: set[TransportChannel] = set()
         self._tcp_servers: set[asyncio.Server] = set()
+        self._ws_client = False
         self._ws_servers: set[websockets.asyncio.server.Server] = set()
 
         #: A coroutine which will be called whenever a request is received.
@@ -270,12 +274,34 @@ class TransportLayer:
             ws_server.close()
         self._ws_servers.clear()
 
+    async def connect_websocket(self, uri: str) -> None:
+        assert not self._channels, (
+            "WebSocket client connection must be the only channel"
+        )
+        self._ws_client = True
+
+        websocket = await websockets.asyncio.client.connect(
+            uri, subprotocols=[WEBSOCKET_SUBPROTOCOL]
+        )
+        ready_event = asyncio.Event()
+        asyncio.create_task(
+            self._serve_websocket(
+                is_secure=uri.startswith("wss:"),
+                ready_event=ready_event,
+                websocket=websocket,
+            )
+        )
+        await ready_event.wait()
+
     async def listen(self, address: TransportAddress) -> None:
         """
         Start listening on the given transport address.
         """
-        loop = asyncio.get_running_loop()
+        assert not self._ws_client, (
+            "WebSocket client connection must be the only channel"
+        )
 
+        loop = asyncio.get_running_loop()
         if address.protocol == "tcp":
             tcp_server = await loop.create_server(
                 lambda: TcpTransportChannel(
@@ -289,7 +315,9 @@ class TransportLayer:
             self._tcp_servers.add(tcp_server)
         elif address.protocol == "ws":
             ws_server = await websockets.asyncio.server.serve(
-                self._serve_websocket,
+                lambda websocket: self._serve_websocket(
+                    is_secure=False, websocket=websocket
+                ),
                 address.host,
                 address.port,
                 subprotocols=[WEBSOCKET_SUBPROTOCOL],
@@ -332,6 +360,10 @@ class TransportLayer:
         Find a suitable transport for the given destination.
         """
         for channel in self._channels:
+            # A WebSocket client sends all its requests to the WebSocket server.
+            if self._ws_client:
+                return channel
+
             if (
                 channel.remote_address is not None
                 and channel.remote_address.protocol == destination.protocol
@@ -380,13 +412,19 @@ class TransportLayer:
 
     async def _serve_websocket(
         self,
-        websocket: websockets.asyncio.server.ServerConnection,
+        *,
+        is_secure: bool,
+        websocket: websockets.asyncio.connection.Connection,
+        ready_event: asyncio.Event | None = None,
     ) -> None:
         channel = WebsocketTransportChannel(
+            is_secure=is_secure,
             message_handler=self._message_handler,
             websocket=websocket,
         )
         self._connect_handler(channel)
+        if ready_event is not None:
+            ready_event.set()
         try:
             async for data in websocket:
                 if isinstance(data, bytes):
@@ -534,11 +572,11 @@ class UdpTransportChannel(TransportChannel, asyncio.DatagramProtocol):
 class WebsocketTransportChannel(TransportChannel):
     is_reliable = True
     uri_transport = "ws"
-    via_transport = "WS"
 
     def __init__(
         self,
         *,
+        is_secure: bool,
         message_handler: MessageHandler,
         websocket: websockets.asyncio.connection.Connection,
     ) -> None:
@@ -551,6 +589,7 @@ class WebsocketTransportChannel(TransportChannel):
         )
         self.via_host = random_string(12) + ".invalid"
         self.via_port = None
+        self.via_transport = "WSS" if is_secure else "WS"
 
     async def close(self) -> None:
         await self._websocket.close()
@@ -578,6 +617,9 @@ class WebsocketTransportChannel(TransportChannel):
             if isinstance(message, sipmessage.Request):
                 assert self.remote_address is not None
                 update_request_via(
-                    message, self.remote_address.host, self.remote_address.port
+                    message,
+                    self.remote_address.host,
+                    self.remote_address.port,
+                    force=True,
                 )
             self._message_handler(self, message)

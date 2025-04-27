@@ -520,6 +520,34 @@ Content-Length: 0
             self.assertEqual(response.code, 200)
             self.assertEqual(response.phrase, "OK")
 
+    @asynctest
+    async def test_connect_websocket(self) -> None:
+        async with (
+            self.transport_layer(
+                [TransportAddress(protocol="ws", host="127.0.0.1", port=5080)]
+            ) as (server_transport, server_received),
+            self.transport_layer([]) as (client_transport, client_received),
+        ):
+            await client_transport.connect_websocket("ws://127.0.0.1:5080")
+
+            # Client sends request.
+            request = create_request(uri_port=5080, uri_transport="ws")
+            await client_transport.send_message(request)
+            await asyncio.sleep(0.1)
+
+            self.assertEqual(len(server_received), 1)
+            received_request = server_received[0]
+            assert isinstance(received_request, sipmessage.Request)
+
+            # Server sends reply.
+            response = create_response(request=received_request, code=200)
+            await server_transport.send_message(response)
+            await asyncio.sleep(0.1)
+
+            self.assertEqual(len(client_received), 1)
+            client_response = client_received[0]
+            assert isinstance(client_response, sipmessage.Response)
+
 
 class GetTransportDestinationTest(unittest.TestCase):
     @asynctest

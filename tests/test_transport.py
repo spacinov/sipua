@@ -24,7 +24,7 @@ from sipua.transport import (
 )
 from sipua.utils import create_contact, create_response, create_via
 
-from .utils import asynctest, lf2crlf
+from .utils import asynctest, lf2crlf, parse_response
 
 
 def create_request(
@@ -147,6 +147,42 @@ class BaseTestCase(unittest.TestCase):
 
 
 class NoTransportChannelTest(BaseTestCase):
+    @asynctest
+    async def test_handle_response_no_vias(self) -> None:
+        response = parse_response("""SIP/2.0 200 OK
+To: sip:+33233445566@127.0.0.1:5060
+From: sip:+33122334455@127.0.0.1:43248;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 INVITE
+
+""")
+        async with self.transport_layer([]) as (transport, _received):
+            with self.assertLogs() as cm:
+                await transport._handle_message(response)
+        self.assertEqual(
+            cm.output,
+            ["WARNING:sipua.transport:Expected exactly one Via header, got 0"],
+        )
+
+    @asynctest
+    async def test_handle_response_too_many_vias(self) -> None:
+        response = parse_response("""SIP/2.0 200 OK
+Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
+Via: SIP/2.0/UDP 127.0.0.1:1234;branch=z9hG4bKabcdefghij
+To: sip:+33233445566@127.0.0.1:5060
+From: sip:+33122334455@127.0.0.1:43248;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 INVITE
+
+""")
+        async with self.transport_layer([]) as (transport, _received):
+            with self.assertLogs() as cm:
+                await transport._handle_message(response)
+        self.assertEqual(
+            cm.output,
+            ["WARNING:sipua.transport:Expected exactly one Via header, got 2"],
+        )
+
     @asynctest
     async def test_send_request(self) -> None:
         async with self.transport_layer([]) as (transport, _received):

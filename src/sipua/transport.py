@@ -166,6 +166,16 @@ async def get_transport_destination(message: sipmessage.Message) -> TransportAdd
     return TransportAddress(protocol=protocol, host=host, port=port)
 
 
+def serialize_message(message: sipmessage.Message) -> bytes:
+    """
+    Serialise the message to bytes.
+
+    This exists purely to keep type checks happy.
+    """
+    assert isinstance(message, (sipmessage.Request, sipmessage.Response))
+    return bytes(message)
+
+
 def set_transport_source(
     message: sipmessage.Message, channel: TransportChannel
 ) -> None:
@@ -464,11 +474,11 @@ class TcpTransportChannel(TransportChannel, asyncio.Protocol):
     async def send_message(
         self, message: sipmessage.Message, destination: TransportAddress
     ) -> None:
-        message_str = str(message)
-        logger.info("=>\n\n" + message_str)
+        data = serialize_message(message)
+        logger.info("=>\n\n" + data.decode())
 
         if self._transport is not None:
-            self._transport.write(message_str.encode("utf8"))
+            self._transport.write(data)
 
     # Protocol
 
@@ -492,11 +502,10 @@ class TcpTransportChannel(TransportChannel, asyncio.Protocol):
         self._connect_handler(self)
 
     def data_received(self, data: bytes) -> None:
-        message_str = data.decode("utf8")
-        logger.info("<=\n\n" + message_str)
+        logger.info("<=\n\n" + data.decode())
 
         try:
-            message = sipmessage.Message.parse(message_str)
+            message = sipmessage.Message.parse(data)
         except ValueError:
             # We cannot recover, close the socket.
             assert self._transport is not None
@@ -540,12 +549,12 @@ class UdpTransportChannel(TransportChannel, asyncio.DatagramProtocol):
     async def send_message(
         self, message: sipmessage.Message, destination: TransportAddress
     ) -> None:
-        message_str = str(message)
-        logger.info("=>\n\n" + message_str)
+        data = serialize_message(message)
+        logger.info("=>\n\n" + data.decode())
 
         if self._transport is not None:
             addr = (destination.host, destination.port)
-            self._transport.sendto(message_str.encode("utf8"), addr)
+            self._transport.sendto(data, addr)
 
     # DatagramProtocol
 
@@ -562,11 +571,10 @@ class UdpTransportChannel(TransportChannel, asyncio.DatagramProtocol):
         self._connect_handler(self)
 
     def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
-        message_str = data.decode("utf8")
-        logger.info("<=\n\n" + message_str)
+        logger.info("<=\n\n" + data.decode())
 
         try:
-            message = sipmessage.Message.parse(message_str)
+            message = sipmessage.Message.parse(data)
         except ValueError:
             # Ignore the datagram.
             return
@@ -604,19 +612,18 @@ class WebsocketTransportChannel(TransportChannel):
     async def send_message(
         self, message: sipmessage.Message, destination: TransportAddress
     ) -> None:
-        message_str = str(message)
-        logger.info("=>\n\n" + message_str)
+        data = serialize_message(message)
+        logger.info("=>\n\n" + data.decode())
 
-        await self._websocket.send(message_str.encode("utf-8"))
+        await self._websocket.send(data)
 
     # WebSocket.
 
     def message_received(self, data: bytes) -> None:
-        message_str = data.decode("utf8")
-        logger.info("<=\n\n" + message_str)
+        logger.info("<=\n\n" + data.decode())
 
         try:
-            message = sipmessage.Message.parse(message_str)
+            message = sipmessage.Message.parse(data)
         except ValueError:
             # Discard invalid message.
             return

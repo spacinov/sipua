@@ -8,11 +8,13 @@ from .utils import lf2crlf, parse_request
 
 
 class UtilsTest(unittest.TestCase):
-    def assertMessage(self, message: sipmessage.Message, data: str) -> None:
-        self.assertEqual(str(message), lf2crlf(data))
+    def assertMessage(
+        self, message: sipmessage.Request | sipmessage.Response, data: bytes
+    ) -> None:
+        self.assertEqual(bytes(message), lf2crlf(data))
 
     def test_create_invite_response_and_ack(self) -> None:
-        request = parse_request("""INVITE sip:+33233445566@127.0.0.1:5060 SIP/2.0
+        request = parse_request(b"""INVITE sip:+33233445566@127.0.0.1:5060 SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
 To: sip:+33233445566@127.0.0.1:5060
@@ -38,7 +40,7 @@ a=silenceSupp:off - - - -
         response = create_response(request=request, code=200)
         self.assertMessage(
             response,
-            """SIP/2.0 200 OK
+            b"""SIP/2.0 200 OK
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 To: <sip:+33233445566@127.0.0.1:5060>
 From: <sip:+33122334455@127.0.0.1:43248>;tag=7bc759c98ae3e112
@@ -51,7 +53,7 @@ CSeq: 1 INVITE
         ack = create_ack(request=request, response=response)
         self.assertMessage(
             ack,
-            """ACK sip:+33233445566@127.0.0.1:5060 SIP/2.0
+            b"""ACK sip:+33233445566@127.0.0.1:5060 SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 To: <sip:+33233445566@127.0.0.1:5060>
 From: <sip:+33122334455@127.0.0.1:43248>;tag=7bc759c98ae3e112
@@ -62,7 +64,7 @@ CSeq: 1 ACK
         )
 
     def test_create_invite_response_with_record_route(self) -> None:
-        request = parse_request("""INVITE sip:callee@u2.domain.com SIP/2.0
+        request = parse_request(b"""INVITE sip:callee@u2.domain.com SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
 To: sip:callee@127.0.0.1:5060
@@ -90,7 +92,7 @@ a=silenceSupp:off - - - -
         response = create_response(request=request, code=200)
         self.assertMessage(
             response,
-            """SIP/2.0 200 OK
+            b"""SIP/2.0 200 OK
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 To: <sip:callee@127.0.0.1:5060>
 From: <sip:+caller@127.0.0.1:43248>;tag=7bc759c98ae3e112

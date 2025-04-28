@@ -20,6 +20,7 @@ from sipua.transport import (
     TransportAddress,
     TransportLayer,
     get_transport_destination,
+    serialize_message,
     update_request_via,
 )
 from sipua.utils import create_contact, create_response, create_via
@@ -51,12 +52,13 @@ def create_request(
     return request
 
 
-def create_request_str(
+def create_request_bytes(
     *,
     via_addr: str = "1.2.3.4:12345",
     via_transport: str,
-) -> str:
-    return lf2crlf(f"""INVITE sip:bob@example.com SIP/2.0
+) -> bytes:
+    return lf2crlf(
+        f"""INVITE sip:bob@example.com SIP/2.0
 Via: SIP/2.0/{via_transport} {via_addr};branch=z9hG4bK1e5b2b763d;rport
 Max-Forwards: 70
 To: sip:bob@example.com
@@ -65,11 +67,13 @@ Call-ID: 126a8db08eba7fb6
 CSeq: 1 OPTIONS
 Content-Length: 0
 
-    """)
+    """.encode()
+    )
 
 
-def create_response_str(*, via_port: int, via_transport: str) -> str:
-    return lf2crlf(f"""SIP/2.0 200 OK
+def create_response_bytes(*, via_port: int, via_transport: str) -> bytes:
+    return lf2crlf(
+        f"""SIP/2.0 200 OK
 Via: SIP/2.0/{via_transport} 127.0.0.1:{via_port};branch=z9hG4bK1e5b2b763d
 To: <sip:bob@example.com>
 From: <sip:alice@example.com>;tag=7bc759c98ae3e112
@@ -77,7 +81,8 @@ Call-ID: 126a8db08eba7fb6
 CSeq: 1 OPTIONS
 Content-Length: 0
 
-""")
+""".encode()
+    )
 
 
 class TestSocket:
@@ -122,8 +127,8 @@ class TestWebsocket:
 
 
 class BaseTestCase(unittest.TestCase):
-    def assertMessage(self, message: sipmessage.Message, data: str) -> None:
-        self.assertEqual(str(message), lf2crlf(data))
+    def assertMessage(self, message: sipmessage.Message, data: bytes) -> None:
+        self.assertEqual(serialize_message(message), lf2crlf(data))
 
     @contextlib.asynccontextmanager
     async def transport_layer(
@@ -149,7 +154,7 @@ class BaseTestCase(unittest.TestCase):
 class NoTransportChannelTest(BaseTestCase):
     @asynctest
     async def test_handle_response_no_vias(self) -> None:
-        response = parse_response("""SIP/2.0 200 OK
+        response = parse_response(b"""SIP/2.0 200 OK
 To: sip:+33233445566@127.0.0.1:5060
 From: sip:+33122334455@127.0.0.1:43248;tag=7bc759c98ae3e112
 Call-ID: 126a8db08eba7fb6
@@ -166,7 +171,7 @@ CSeq: 1 INVITE
 
     @asynctest
     async def test_handle_response_too_many_vias(self) -> None:
-        response = parse_response("""SIP/2.0 200 OK
+        response = parse_response(b"""SIP/2.0 200 OK
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 Via: SIP/2.0/UDP 127.0.0.1:1234;branch=z9hG4bKabcdefghij
 To: sip:+33233445566@127.0.0.1:5060
@@ -222,7 +227,7 @@ class TcpTransportChannelTest(BaseTestCase):
     async def test_receive_request_send_response(self) -> None:
         async with self.transport_layer_and_socket() as (transport, sock, received):
             # Receive request.
-            await sock.send(create_request_str(via_transport="TCP").encode())
+            await sock.send(create_request_bytes(via_transport="TCP"))
 
             self.assertEqual(len(received), 1)
             request = received[0]
@@ -260,7 +265,8 @@ class TcpTransportChannelTest(BaseTestCase):
             data = await sock.recv()
             self.assertEqual(
                 data,
-                lf2crlf(f"""SIP/2.0 200 OK
+                lf2crlf(
+                    f"""SIP/2.0 200 OK
 Via: SIP/2.0/TCP 1.2.3.4:12345;branch=z9hG4bK1e5b2b763d;rport={sock.local_port};received=127.0.0.1
 To: <sip:bob@example.com>
 From: <sip:alice@example.com>;tag=7bc759c98ae3e112
@@ -268,7 +274,8 @@ Call-ID: 126a8db08eba7fb6
 CSeq: 1 OPTIONS
 Content-Length: 0
 
-""").encode(),
+""".encode()
+                ),
             )
 
     @asynctest
@@ -291,7 +298,8 @@ Content-Length: 0
                 data = await sock.recv()
                 self.assertEqual(
                     data,
-                    lf2crlf(f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port};transport=tcp SIP/2.0
+                    lf2crlf(
+                        f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port};transport=tcp SIP/2.0
 Via: SIP/2.0/TCP 127.0.0.1:{sock.remote_port};branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
 To: <sip:bob@example.com>
@@ -301,14 +309,15 @@ CSeq: 1 OPTIONS
 Contact: <sip:127.0.0.1:{sock.remote_port};transport=tcp>
 Content-Length: 0
 
-""").encode(),
+""".encode()
+                    ),
                 )
 
                 # Receive response.
                 await sock.send(
-                    create_response_str(
+                    create_response_bytes(
                         via_port=sock.remote_port, via_transport="TCP"
-                    ).encode()
+                    )
                 )
 
                 self.assertEqual(len(received), 1)
@@ -362,7 +371,7 @@ class UdpTransportChannelTest(BaseTestCase):
     async def test_receive_request_send_response(self) -> None:
         async with self.transport_layer_and_socket() as (transport, sock, received):
             # Receive request.
-            await sock.send(create_request_str(via_transport="UDP").encode())
+            await sock.send(create_request_bytes(via_transport="UDP"))
 
             self.assertEqual(len(received), 1)
             request = received[0]
@@ -400,7 +409,8 @@ class UdpTransportChannelTest(BaseTestCase):
             data = await sock.recv()
             self.assertEqual(
                 data,
-                lf2crlf(f"""SIP/2.0 200 OK
+                lf2crlf(
+                    f"""SIP/2.0 200 OK
 Via: SIP/2.0/UDP 1.2.3.4:12345;branch=z9hG4bK1e5b2b763d;rport={sock.local_port};received=127.0.0.1
 To: <sip:bob@example.com>
 From: <sip:alice@example.com>;tag=7bc759c98ae3e112
@@ -408,7 +418,8 @@ Call-ID: 126a8db08eba7fb6
 CSeq: 1 OPTIONS
 Content-Length: 0
 
-""").encode(),
+""".encode()
+                ),
             )
 
     @asynctest
@@ -421,7 +432,8 @@ Content-Length: 0
             data = await sock.recv()
             self.assertEqual(
                 data,
-                lf2crlf(f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port} SIP/2.0
+                lf2crlf(
+                    f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port} SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:5060;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
 To: <sip:bob@example.com>
@@ -431,13 +443,12 @@ CSeq: 1 OPTIONS
 Contact: <sip:127.0.0.1:5060;transport=udp>
 Content-Length: 0
 
-""").encode(),
+""".encode()
+                ),
             )
 
             # Receive response.
-            await sock.send(
-                create_response_str(via_port=5060, via_transport="UDP").encode()
-            )
+            await sock.send(create_response_bytes(via_port=5060, via_transport="UDP"))
 
             self.assertEqual(len(received), 1)
             response = received[0]
@@ -482,9 +493,9 @@ class WebsocketTransportChannelTest(BaseTestCase):
         async with self.transport_layer_and_socket() as (transport, sock, received):
             # Receive request.
             await sock.send(
-                create_request_str(
+                create_request_bytes(
                     via_addr="li62vs2t75f6.invalid", via_transport="WS"
-                ).encode()
+                )
             )
 
             self.assertEqual(len(received), 1)
@@ -522,7 +533,8 @@ class WebsocketTransportChannelTest(BaseTestCase):
             data = await sock.recv()
             self.assertEqual(
                 data,
-                lf2crlf(f"""SIP/2.0 200 OK
+                lf2crlf(
+                    f"""SIP/2.0 200 OK
 Via: SIP/2.0/WS li62vs2t75f6.invalid;branch=z9hG4bK1e5b2b763d;rport={sock.local_port};received=127.0.0.1
 To: <sip:bob@example.com>
 From: <sip:alice@example.com>;tag=7bc759c98ae3e112
@@ -530,7 +542,8 @@ Call-ID: 126a8db08eba7fb6
 CSeq: 1 OPTIONS
 Content-Length: 0
 
-""").encode(),
+""".encode()
+                ),
             )
 
     @asynctest
@@ -544,7 +557,8 @@ Content-Length: 0
             data = await sock.recv()
             self.assertEqual(
                 data,
-                lf2crlf(f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port};transport=ws SIP/2.0
+                lf2crlf(
+                    f"""OPTIONS sip:bob@127.0.0.1:{sock.local_port};transport=ws SIP/2.0
 Via: SIP/2.0/WS WeNzcJ9a6ATr.invalid;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
 To: <sip:bob@example.com>
@@ -554,13 +568,12 @@ CSeq: 1 OPTIONS
 Contact: <sip:WeNzcJ9a6ATr.invalid;transport=ws>
 Content-Length: 0
 
-""").encode(),
+""".encode()
+                ),
             )
 
             # Receive response.
-            await sock.send(
-                create_response_str(via_port=5060, via_transport="UDP").encode()
-            )
+            await sock.send(create_response_bytes(via_port=5060, via_transport="UDP"))
 
             self.assertEqual(len(received), 1)
             response = received[0]

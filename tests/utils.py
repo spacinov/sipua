@@ -24,17 +24,17 @@ def asynctest(
     return wrap
 
 
-def lf2crlf(x: str) -> str:
-    return x.replace("\n", "\r\n")
+def lf2crlf(x: bytes) -> bytes:
+    return x.replace(b"\n", b"\r\n")
 
 
-def parse_request(data: str) -> sipmessage.Request:
+def parse_request(data: bytes) -> sipmessage.Request:
     message = sipmessage.Message.parse(lf2crlf(data))
     assert isinstance(message, sipmessage.Request)
     return message
 
 
-def parse_response(data: str) -> sipmessage.Response:
+def parse_response(data: bytes) -> sipmessage.Response:
     message = sipmessage.Message.parse(lf2crlf(data))
     assert isinstance(message, sipmessage.Response)
     return message

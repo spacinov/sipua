@@ -8,7 +8,10 @@ name = "sipua"
 version = "0.3.0"
 
 # Dependencies
-dependencies = ["sipmessage", "websockets"]
+dependencies = [
+    "sipmessage >= 0.6.0, < 0.7.0",
+    "websockets",
+]
 requires-python = ">= 3.10"
 
 # Development

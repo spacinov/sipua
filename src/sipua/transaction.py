@@ -143,9 +143,13 @@ class TransactionLayer:
         #: A coroutine which will be called whenever a new transaction is received.
         self.transaction_handler: TransactionHandler | None = None
 
-    async def request(self, request: sipmessage.Request) -> sipmessage.Response:
+    async def send_request(self, request: sipmessage.Request) -> sipmessage.Response:
         """
         Send a request in a transaction and return the final response.
+
+        If a fatal transport error occurs, a `503` response will be returned.
+
+        If a timeout occurs, a `408` response will be returned.
         """
         key = get_client_transaction_key(request)
         transaction: ClientInviteTransaction | ClientNonInviteTransaction
@@ -159,7 +163,15 @@ class TransactionLayer:
             )
         self._client_transactions[key] = transaction
 
-        return await transaction.run()
+        # Remap transport errors and timeouts to error responses.
+        #
+        # See https://datatracker.ietf.org/doc/html/rfc3261.html#section-8.1.3.1
+        try:
+            return await transaction.run()
+        except ConnectionError:
+            return create_response(request=request, code=503)
+        except TimeoutError:
+            return create_response(request=request, code=408)
 
     async def _receive_request(self, request: sipmessage.Request) -> None:
         # Try matching the request to a server transaction.

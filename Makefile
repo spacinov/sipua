@@ -6,7 +6,7 @@ clean:
 lint:
 	ruff check --diff
 	ruff format --diff
-	mypy src tests
+	mypy examples src tests
 
 lint-pkg:
 	check-manifest

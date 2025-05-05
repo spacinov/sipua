@@ -5,6 +5,7 @@
 
 import importlib.metadata
 
+from .dialog import Dialog, DialogLayer
 from .transaction import (
     ServerInviteTransaction,
     ServerNonInviteTransaction,
@@ -17,6 +18,8 @@ from .utils import create_ack, create_response
 __all__ = [
     "create_ack",
     "create_response",
+    "Dialog",
+    "DialogLayer",
     "ServerInviteTransaction",
     "ServerNonInviteTransaction",
     "ServerTransaction",

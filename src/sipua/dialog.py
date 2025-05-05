@@ -162,7 +162,7 @@ class Dialog:
         """
         Send the request in a transaction and return the final response.
         """
-        response = await self._dialog_layer._transaction_layer.request(request)
+        response = await self._dialog_layer._transaction_layer.send_request(request)
 
         # See https://datatracker.ietf.org/doc/html/rfc3261#section-12.1.2
         if response_establishes_dialog(response.cseq.method, response.code):

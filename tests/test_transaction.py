@@ -405,8 +405,32 @@ class EndToEndTest(unittest.TestCase):
             server_transaction.transaction_handler = reply_to_invite
 
             request = create_request("INVITE")
-            response = await client_transaction.request(request)
+            response = await client_transaction.send_request(request)
             self.assertEqual(response.code, 200)
+
+    @asynctest
+    async def test_invite_connection_error(self) -> None:
+        async with self.client_and_server() as (client_transaction, server_transaction):
+            request = create_request("INVITE")
+            request.uri = sipmessage.URI(
+                scheme="sip",
+                user="bob",
+                host="127.0.0.1",
+                port=1234,
+                parameters=sipmessage.Parameters(transport="tcp"),
+            )
+            response = await client_transaction.send_request(request)
+            self.assertEqual(response.code, 503)
+
+    @asynctest
+    @shorten_timers
+    async def test_invite_timeout_error(self) -> None:
+        async with self.client_and_server() as (client_transaction, server_transaction):
+            await server_transaction._transport_layer.close()
+
+            request = create_request("INVITE")
+            response = await client_transaction.send_request(request)
+            self.assertEqual(response.code, 408)
 
     @asynctest
     async def test_register(self) -> None:
@@ -419,5 +443,5 @@ class EndToEndTest(unittest.TestCase):
             server_transaction.transaction_handler = reply_to_register
 
             request = create_request("REGISTER")
-            response = await client_transaction.request(request)
+            response = await client_transaction.send_request(request)
             self.assertEqual(response.code, 200)

@@ -1,7 +1,12 @@
+#
+# Copyright (C) Spacinov SAS
+# Distributed under the 2-clause BSD license
+#
+
+
 import unittest
 
 import sipmessage
-
 from sipua.utils import create_ack, create_response
 
 from .utils import lf2crlf, parse_request

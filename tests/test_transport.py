@@ -14,7 +14,6 @@ from unittest.mock import patch
 import sipmessage
 import websockets.asyncio.client
 import websockets.asyncio.connection
-
 from sipua.transport import (
     WEBSOCKET_SUBPROTOCOL,
     TransportAddress,

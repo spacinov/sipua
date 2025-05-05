@@ -52,7 +52,6 @@ class DialogTest(unittest.TestCase):
     async def server_request_handler(
         self,
         request: sipmessage.Request,
-        transaction: sipua.ServerTransaction,
         *,
         dialog_layer: sipua.DialogLayer,
         route_set: list[sipmessage.Address] = [],
@@ -68,7 +67,8 @@ class DialogTest(unittest.TestCase):
         self.assertEqual(response.cseq, request.cseq)
         self.assertEqual(response.from_address, request.from_address)
         self.assertEqual(response.via, request.via)
-        await transaction.send_response(response)
+        transaction_layer = dialog_layer._transaction_layer
+        await transaction_layer.send_response(response)
 
         # Check server dialog state.
         self.assertEqual(server_dialog.local_cseq, 1)

@@ -8,7 +8,8 @@ import typing
 
 import sipmessage
 
-from .transaction import ServerTransaction, TransactionLayer
+from .transaction import TransactionLayer
+from .transport import RequestHandler
 from .utils import (
     create_contact,
     create_response,
@@ -21,12 +22,6 @@ DialogKey = tuple[str, str]
 
 # When we drop support for Python 3.10, we can use `typing.Self`.
 T = typing.TypeVar("T", bound="Dialog")
-
-# Public handlers.
-RequestHandler = typing.Callable[
-    [sipmessage.Request, ServerTransaction],
-    typing.Coroutine[None, None, None],
-]
 
 
 def get_dialog_key(request: sipmessage.Request) -> DialogKey:
@@ -146,9 +141,7 @@ class Dialog:
             response.contact = [create_contact()]
         return response
 
-    async def handle_request(
-        self, request: sipmessage.Request, transaction: ServerTransaction
-    ) -> None:
+    async def handle_request(self, request: sipmessage.Request) -> None:
         """
         Handle a request for this dialog.
 
@@ -156,7 +149,7 @@ class Dialog:
         with a "Not Implemented" error.
         """
         response = self.create_response(request, 501)
-        await transaction.send_response(response)
+        await self.send_response(response)
 
     async def send_request(self, request: sipmessage.Request) -> sipmessage.Response:
         """
@@ -177,6 +170,12 @@ class Dialog:
 
         return response
 
+    async def send_response(self, response: sipmessage.Response) -> None:
+        """
+        Send the response.
+        """
+        await self._dialog_layer._transaction_layer.send_response(response)
+
 
 class DialogLayer:
     """
@@ -188,18 +187,17 @@ class DialogLayer:
     def __init__(self, transaction_layer: TransactionLayer) -> None:
         self._dialogs: dict[DialogKey, Dialog] = {}
         self._transaction_layer = transaction_layer
-        self._transaction_layer.transaction_handler = self._handle_transaction
+        self._transaction_layer.request_handler = self._handle_request
 
         #: A coroutine which will be called whenever a request is received
         #: which does not match an existing dialog.
         self.request_handler: RequestHandler | None = None
 
-    async def _handle_transaction(self, transaction: ServerTransaction) -> None:
+    async def _handle_request(self, request: sipmessage.Request) -> None:
         # Deliver the request to the dialog or the application.
-        request = transaction.request
         key = get_dialog_key(request)
         dialog = self._dialogs.get(key)
         if dialog is not None:
-            await dialog.handle_request(request, transaction)
+            await dialog.handle_request(request)
         elif self.request_handler is not None:
-            await self.request_handler(request, transaction)
+            await self.request_handler(request)

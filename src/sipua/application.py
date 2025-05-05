@@ -6,7 +6,7 @@
 import sipmessage
 
 from .dialog import DialogLayer
-from .transaction import ServerTransaction, TransactionLayer
+from .transaction import TransactionLayer
 from .transport import TransportAddress, TransportLayer
 from .utils import create_response
 
@@ -42,11 +42,7 @@ class Application:
 
     # overrideable
 
-    async def handle_request(
-        self,
-        request: sipmessage.Request,
-        transaction: ServerTransaction,
-    ) -> None:
+    async def handle_request(self, request: sipmessage.Request) -> None:
         """
         Handle a request which does not match an existing dialog.
 
@@ -54,4 +50,4 @@ class Application:
         for instance to handle incoming calls.
         """
         response = create_response(request=request, code=501)
-        await transaction.send_response(response)
+        await self.transaction_layer.send_response(response)

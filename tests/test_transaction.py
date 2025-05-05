@@ -5,6 +5,7 @@
 
 import asyncio
 import contextlib
+import functools
 import typing
 import unittest
 from collections.abc import AsyncGenerator, Callable
@@ -17,7 +18,6 @@ from sipua.transaction import (
     ClientNonInviteTransaction,
     ServerInviteTransaction,
     ServerNonInviteTransaction,
-    ServerTransaction,
     TransactionLayer,
     TransactionState,
     get_client_transaction_key,
@@ -395,13 +395,18 @@ class EndToEndTest(unittest.TestCase):
 
     @asynctest
     async def test_invite(self) -> None:
-        async def reply_to_invite(transaction: ServerTransaction) -> None:
-            if transaction.request.method == "INVITE":
-                response = create_response(request=transaction.request, code=200)
-                await transaction.send_response(response)
+        async def reply_to_invite(
+            transaction_layer: TransactionLayer,
+            request: sipmessage.Request,
+        ) -> None:
+            if request.method == "INVITE":
+                response = create_response(request=request, code=200)
+                await transaction_layer.send_response(response)
 
         async with self.client_and_server() as (client_transaction, server_transaction):
-            server_transaction.transaction_handler = reply_to_invite
+            server_transaction.request_handler = functools.partial(
+                reply_to_invite, server_transaction
+            )
 
             request = create_request("INVITE")
             response = await client_transaction.send_request(request)
@@ -433,13 +438,17 @@ class EndToEndTest(unittest.TestCase):
 
     @asynctest
     async def test_register(self) -> None:
-        async def reply_to_register(transaction: ServerTransaction) -> None:
-            if transaction.request.method == "REGISTER":
-                response = create_response(request=transaction.request, code=200)
-                await transaction.send_response(response)
+        async def reply_to_register(
+            transaction_layer: TransactionLayer, request: sipmessage.Request
+        ) -> None:
+            if request.method == "REGISTER":
+                response = create_response(request=request, code=200)
+                await transaction_layer.send_response(response)
 
         async with self.client_and_server() as (client_transaction, server_transaction):
-            server_transaction.transaction_handler = reply_to_register
+            server_transaction.request_handler = functools.partial(
+                reply_to_register, server_transaction
+            )
 
             request = create_request("REGISTER")
             response = await client_transaction.send_request(request)

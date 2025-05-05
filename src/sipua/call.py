@@ -29,7 +29,6 @@ from aiortc.rtcrtpparameters import RTCRtpReceiveParameters, RTCRtpSendParameter
 from aiortc.rtcrtpreceiver import RemoteStreamTrack
 
 from .dialog import Dialog, DialogLayer
-from .transaction import ServerInviteTransaction, ServerTransaction
 from .utils import create_contact
 
 COMPONENT_RTP = 1
@@ -151,22 +150,20 @@ class Call(Dialog):
     def audioTransceiver(self) -> RTCRtpTransceiver:
         return self.__rtpTransceiver
 
-    async def accept(self, transaction: ServerTransaction) -> None:
+    async def accept(self, request: sipmessage.Request) -> None:
         """
         Accept an incoming call.
         """
-        assert isinstance(transaction, ServerInviteTransaction)
         self.__iceTransport._connection.ice_controlling = False
 
-        await self._handle_sdp(transaction.request.body.decode())
+        await self._handle_sdp(request.body.decode())
 
-        response = self.create_response(transaction.request, 200)
+        response = self.create_response(request, 200)
         response.content_type = "application/sdp"
         response.body = (await self._create_sdp()).encode()
 
-        # send response
-        await transaction.send_response(response)
-
+        # Send response and start media flow.
+        await self.send_response(response)
         await self._media_connect()
 
     async def hangup(self) -> None:
@@ -191,22 +188,21 @@ class Call(Dialog):
         request.content_type = "application/sdp"
         request.body = (await self._create_sdp()).encode()
 
-        # parse SDP
         response = await self.send_request(request)
         if response.code >= 200 and response.code < 300:
+            # Parse SDP and start media flow.
             await self._handle_sdp(response.body.decode())
             await self._media_connect()
         else:
+            # Shutdown media and raise an exception.
             await self._media_close()
             raise Exception(f"Call failed: {response.code} {response.phrase}")
 
-    async def handle_request(
-        self, request: sipmessage.Request, transaction: ServerTransaction
-    ) -> None:
+    async def handle_request(self, request: sipmessage.Request) -> None:
         if request.method == "BYE":
             response = self.create_response(request, 200)
             response.contact = [create_contact()]
-            await transaction.send_response(response)
+            await self._dialog_layer._transaction_layer.send_response(response)
             await self._media_close()
 
     async def _create_sdp(self) -> str:

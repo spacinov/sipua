@@ -6,11 +6,10 @@
 import asyncio
 import enum
 import logging
-import typing
 
 import sipmessage
 
-from .transport import TransportLayer
+from .transport import RequestHandler, TransportLayer
 from .utils import create_ack, create_response
 
 logger = logging.getLogger(__name__)
@@ -24,12 +23,6 @@ TIMER_D = 32
 
 ClientTransactionKey = tuple[str, str]
 ServerTransactionKey = tuple[str, str, str]
-
-# Public handlers.
-TransactionHandler = typing.Callable[
-    ["ServerTransaction"],
-    typing.Coroutine[None, None, None],
-]
 
 
 def get_client_transaction_key(message: sipmessage.Message) -> ClientTransactionKey:
@@ -49,23 +42,26 @@ def get_client_transaction_key(message: sipmessage.Message) -> ClientTransaction
     return (branch, method)
 
 
-def get_server_transaction_key(request: sipmessage.Request) -> ServerTransactionKey:
+def get_server_transaction_key(message: sipmessage.Message) -> ServerTransactionKey:
     """
     Get the key used to match requests to server transactions.
 
     See :rfc:`3261#section-17.2.3`.
     """
-    branch = request.via[0].parameters.get("branch")
+    branch = message.via[0].parameters.get("branch")
     assert branch is not None, "Via branch must be defined for a transaction"
 
-    sent_by = request.via[0].host
-    if request.via[0].port is not None:
-        sent_by += f":{request.via[0].port}"
+    sent_by = message.via[0].host
+    if message.via[0].port is not None:
+        sent_by += f":{message.via[0].port}"
 
-    if request.method == "ACK":
-        method = "INVITE"
+    if isinstance(message, sipmessage.Request):
+        if message.method == "ACK":
+            method = "INVITE"
+        else:
+            method = message.method
     else:
-        method = request.method
+        method = message.cseq.method
 
     return (branch, sent_by, method)
 
@@ -92,13 +88,6 @@ class Transaction:
         self._state = state
         self._transaction_layer = transaction_layer
         self._transport_layer = transaction_layer._transport_layer
-
-    @property
-    def request(self) -> sipmessage.Request:
-        """
-        The request which created the transaction.
-        """
-        return self._request
 
     def _log_info(self, msg: str, *args: object) -> None:
         logger.info(
@@ -140,18 +129,22 @@ class TransactionLayer:
         self._server_transactions: dict[ServerTransactionKey, ServerTransaction] = {}
         self._transport_layer = transport_layer
 
-        #: A coroutine which will be called whenever a new transaction is received.
-        self.transaction_handler: TransactionHandler | None = None
+        #: A coroutine which will be called whenever a request is received
+        #: which creates a new server transaction.
+        self.request_handler: RequestHandler | None = None
 
     async def send_request(self, request: sipmessage.Request) -> sipmessage.Response:
         """
-        Send a request in a transaction and return the final response.
+        Send the request in a transaction and return the final response.
 
         If a fatal transport error occurs, a `503` response will be returned.
 
         If a timeout occurs, a `408` response will be returned.
         """
         key = get_client_transaction_key(request)
+        assert key not in self._client_transactions, (
+            "A client transaction was found for the request"
+        )
         transaction: ClientInviteTransaction | ClientNonInviteTransaction
         if request.method == "INVITE":
             transaction = ClientInviteTransaction(
@@ -172,6 +165,17 @@ class TransactionLayer:
             return create_response(request=request, code=503)
         except TimeoutError:
             return create_response(request=request, code=408)
+
+    async def send_response(self, response: sipmessage.Response) -> None:
+        """
+        Send the response.
+        """
+        key = get_server_transaction_key(response)
+        assert key in self._server_transactions, (
+            "No server transaction was found for the response"
+        )
+        transaction = self._server_transactions[key]
+        await transaction.send_response(response)
 
     async def _receive_request(self, request: sipmessage.Request) -> None:
         # Try matching the request to a server transaction.
@@ -198,8 +202,8 @@ class TransactionLayer:
         await transaction._receive_request(request)
 
         # Notify the transaction user.
-        if self.transaction_handler is not None:
-            await self.transaction_handler(transaction)
+        if self.request_handler is not None:
+            await self.request_handler(request)
 
     async def _receive_response(self, response: sipmessage.Response) -> None:
         # Try matching the response to a client transaction.

@@ -61,9 +61,7 @@ class ServerApplication(sipua.Application):
         self.dtls = dtls
         self.ice = ice
 
-    async def handle_request(
-        self, request: sipmessage.Request, transaction: sipua.ServerTransaction
-    ) -> None:
+    async def handle_request(self, request: sipmessage.Request) -> None:
         """
         Handle a request outside a dialog.
         """
@@ -92,9 +90,9 @@ class ServerApplication(sipua.Application):
                 call._handle_sdp = patched_handle_sdp  # type: ignore
 
             # Send response.
-            await call.accept(transaction)
+            await call.accept(request)
         else:
-            await super().handle_request(request, transaction)
+            await super().handle_request(request)
 
 
 class UdpTest(unittest.TestCase):

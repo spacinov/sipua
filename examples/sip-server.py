@@ -12,9 +12,7 @@ import sipua
 
 
 class SipServer(sipua.Application):
-    async def handle_request(
-        self, request: sipmessage.Request, transaction: sipua.ServerTransaction
-    ) -> None:
+    async def handle_request(self, request: sipmessage.Request) -> None:
         """
         Handle a request outside a dialog.
         """
@@ -24,10 +22,10 @@ class SipServer(sipua.Application):
                 dialog_layer=self.dialog_layer,
                 request=request,
             )
-            await call.accept(transaction)
+            await call.accept(request)
         else:
             # Reject any other requests.
-            await super().handle_request(request, transaction)
+            await super().handle_request(request)
 
 
 async def main() -> None:

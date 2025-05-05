@@ -25,6 +25,7 @@ API Reference
 .. toctree::
    :maxdepth: 2
 
+   call
    dialog
    transaction
    transport

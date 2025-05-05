@@ -1,10 +1,15 @@
+#
+# Copyright (C) Spacinov SAS
+# Distributed under the 2-clause BSD license
+#
+
+
 import contextlib
 import functools
 import unittest
 from collections.abc import AsyncGenerator
 
 import sipmessage
-
 import sipua
 
 from .utils import asynctest

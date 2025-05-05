@@ -11,7 +11,6 @@ from collections.abc import AsyncGenerator, Callable
 from unittest.mock import patch
 
 import sipmessage
-
 import sipua.transaction as sip_transaction
 from sipua.transaction import (
     ClientInviteTransaction,

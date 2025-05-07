@@ -152,7 +152,7 @@ class Call(Dialog):
 
     async def accept(self, request: sipmessage.Request) -> None:
         """
-        Accept an incoming call.
+        Accept an incoming call by sending a `200` response.
         """
         self.__iceTransport._connection.ice_controlling = False
 
@@ -168,7 +168,7 @@ class Call(Dialog):
 
     async def hangup(self) -> None:
         """
-        Hangup the call.
+        Hangup the call by sending a `BYE` request.
         """
         if self.__terminated:
             return
@@ -178,15 +178,20 @@ class Call(Dialog):
 
         await self._media_close()
 
-    async def invite(self) -> None:
+    async def invite(self, extra_headers: list[tuple[str, str]] = []) -> None:
         """
-        Place an outgoing call.
+        Make an outgoing call by sending an `INVITE` request.
+
+        If you wish to send additional headers in the `INVITE`, specify
+        them in ``extra_headers``.
         """
         self.__iceTransport._connection.ice_controlling = True
 
         request = self.create_request("INVITE")
         request.content_type = "application/sdp"
         request.body = (await self._create_sdp()).encode()
+        for key, value in extra_headers:
+            request.headers.add(key, value)
 
         response = await self.send_request(request)
         if response.code >= 200 and response.code < 300:

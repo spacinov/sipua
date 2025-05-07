@@ -32,6 +32,7 @@ class ClientApplication(sipua.Application):
         *,
         local_address: sipmessage.Address,
         remote_address: sipmessage.Address,
+        extra_headers: list[tuple[str, str]] = [],
         **kwargs: object,
     ) -> None:
         call = sipua.Call.create_uac(
@@ -43,7 +44,7 @@ class ClientApplication(sipua.Application):
         )
         assert call.audioTransceiver.kind == "audio"
 
-        await call.invite()
+        await call.invite(extra_headers=extra_headers)
 
         # send media
         await asyncio.sleep(2)
@@ -60,6 +61,7 @@ class ServerApplication(sipua.Application):
         super().__init__()
         self.dtls = dtls
         self.ice = ice
+        self.invite_headers: list[str] = []
 
     async def handle_request(self, request: sipmessage.Request) -> None:
         """
@@ -91,6 +93,8 @@ class ServerApplication(sipua.Application):
 
             # Send response.
             await call.accept(request)
+
+            self.invite_headers = sorted(request.headers.keys())
         else:
             await super().handle_request(request)
 
@@ -129,6 +133,21 @@ class UdpTest(unittest.TestCase):
 
         await asyncio.gather(client.close(), server.close())
 
+        self.assertEqual(
+            server.invite_headers,
+            [
+                "CSeq",
+                "Call-ID",
+                "Contact",
+                "Content-Length",
+                "Content-Type",
+                "From",
+                "Max-Forwards",
+                "To",
+                "Via",
+            ],
+        )
+
     @asynctest
     async def test_invite_ok_no_ice(self) -> None:
         server = ServerApplication(ice=False)
@@ -157,6 +176,43 @@ class UdpTest(unittest.TestCase):
         )
 
         await asyncio.gather(client.close(), server.close())
+
+    @asynctest
+    async def test_invite_ok_with_extra_headers(self) -> None:
+        server = ServerApplication(dtls=True)
+        await server.listen(UDP_SERVER)
+
+        client = ClientApplication()
+        await client.listen(UDP_CLIENT)
+        await client.invite(
+            dtls=True,
+            extra_headers=[
+                ("X-Header-A", "value-a"),
+                ("X-Header-B", "value-b1"),
+                ("X-Header-B", "value-b2"),
+            ],
+            local_address=self.local_address,
+            remote_address=self.remote_address,
+        )
+
+        await asyncio.gather(client.close(), server.close())
+
+        self.assertEqual(
+            server.invite_headers,
+            [
+                "CSeq",
+                "Call-ID",
+                "Contact",
+                "Content-Length",
+                "Content-Type",
+                "From",
+                "Max-Forwards",
+                "To",
+                "Via",
+                "X-Header-A",
+                "X-Header-B",
+            ],
+        )
 
     @asynctest
     async def test_invite_ok_with_stun_server(self) -> None:

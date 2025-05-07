@@ -18,6 +18,7 @@ extensions = [
     "sphinx.ext.intersphinx",
 ]
 intersphinx_mapping = {
+    "aiortc": ("https://aiortc.readthedocs.org/en/stable", None),
     "python": ("https://docs.python.org/3", None),
     "sipmessage": ("https://sipmessage.readthedocs.org/en/stable", None),
 }

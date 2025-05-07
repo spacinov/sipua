@@ -148,6 +148,9 @@ class Call(Dialog):
 
     @property
     def audioTransceiver(self) -> RTCRtpTransceiver:
+        """
+        The RTP transceiver used for audio.
+        """
         return self.__rtpTransceiver
 
     async def accept(self, request: sipmessage.Request) -> None:

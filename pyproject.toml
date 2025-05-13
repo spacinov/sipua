@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Version
 name = "sipua"
-version = "0.5.1"
+version = "0.5.2"
 
 # Dependencies
 dependencies = [
@@ -51,7 +51,6 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://sipua.readthedocs.io/"
 Documentation = "https://sipua.readthedocs.io/"
 Repository = "https://github.com/spacinov/sipua"
 Issues = "https://github.com/spacinov/sipua/issues"

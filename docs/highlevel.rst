@@ -1,5 +1,8 @@
-Call
-====
+High level API
+==============
+
+.. autoclass:: sipua.Application
+   :members:
 
 .. autoclass:: sipua.Call()
    :members:

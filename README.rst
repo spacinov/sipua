@@ -24,6 +24,10 @@
 
 The ``sipua`` project provides a library for writing SIP user agents in Python.
 
+To learn more about ``sipua`` please `read the documentation`_.
+
+.. _read the documentation: https://sipua.readthedocs.io/en/stable/
+
 License
 -------
 

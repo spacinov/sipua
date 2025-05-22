@@ -17,7 +17,15 @@ sipua
    :target: https://codecov.io/gh/spacinov/sipua
    :alt: Coverage
 
-The ``sipua`` project provides a library for writing SIP user agents in Python.
+The ``sipua`` project provides a library for writing SIP user agents in Python,
+with a focus on correctness and composability. It can be used to write clients,
+servers or proxies.
+
+Its features include:
+
+- A transport layer supporting UDP, TCP and WebSocket.
+- A transaction layer for stateful user agents and proxies.
+- An RTP and RTCP stack with optional support for `ICE`_ and `DTLS-SRTP`_.
 
 .. toctree::
    :caption: API Reference
@@ -34,3 +42,6 @@ The ``sipua`` project provides a library for writing SIP user agents in Python.
    :hidden:
 
    license
+
+.. _ICE: https://datatracker.ietf.org/doc/html/rfc8445
+.. _DTLS-SRTP: https://datatracker.ietf.org/doc/html/rfc5764

@@ -64,9 +64,10 @@ class Dialog:
         self.local_cseq = 1
         self.remote_address = remote_address
         self.route_set = route_set
+        self._key = (self.call_id, local_tag)
 
         # Register the dialog.
-        dialog_layer._dialogs[(self.call_id, local_tag)] = self
+        dialog_layer._dialogs[self._key] = self
 
     @classmethod
     def create_uac(
@@ -201,3 +202,6 @@ class DialogLayer:
             await dialog.handle_request(request)
         elif self.request_handler is not None:
             await self.request_handler(request)
+
+    def _dialog_terminated(self, dialog: Dialog) -> None:
+        self._dialogs.pop(dialog._key)

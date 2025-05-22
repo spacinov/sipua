@@ -4,6 +4,7 @@
 #
 
 import asyncio
+import enum
 
 import pylibsrtp
 import sipmessage
@@ -101,6 +102,12 @@ def create_rtp_transceiver(transport: RTCDtlsTransport) -> RTCRtpTransceiver:
     return transceiver
 
 
+class CallState(enum.Enum):
+    Created = 0
+    Established = 1
+    Terminated = 2
+
+
 class Call(Dialog):
     """
     A SIP call with support for RTP.
@@ -128,7 +135,7 @@ class Call(Dialog):
         self.__remoteDtls: RTCDtlsParameters | None = None
         self.__remoteIce: RTCIceParameters | None = None
         self.__skip_ice = False
-        self.__terminated = False
+        self.__state = CallState.Created
 
         # Create ICE transport.
         iceServers = []
@@ -173,12 +180,11 @@ class Call(Dialog):
         """
         Hangup the call by sending a `BYE` request.
         """
-        if self.__terminated:
+        if self.__state != CallState.Established:
             return
 
         request = self.create_request("BYE")
         await self.send_request(request)
-
         await self._media_close()
 
     async def invite(self, extra_headers: list[tuple[str, str]] = []) -> None:
@@ -312,9 +318,11 @@ class Call(Dialog):
         await self.__rtpTransceiver.receiver.receive(
             RTCRtpReceiveParameters(codecs=self.__rtpTransceiver._codecs)
         )
+        self.__state = CallState.Established
 
     async def _media_close(self) -> None:
         await self.__rtpTransceiver.stop()
         await self.__dtlsTransport.stop()
         await self.__iceTransport.stop()
-        self.__terminated = True
+        self._dialog_layer._dialog_terminated(self)
+        self.__state = CallState.Terminated

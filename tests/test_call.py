@@ -99,7 +99,12 @@ class ServerApplication(sipua.Application):
             await super().handle_request(request)
 
 
-class UdpTest(unittest.TestCase):
+class BaseTestCase(unittest.TestCase):
+    def assertNoDialogs(self, app: sipua.Application) -> None:
+        self.assertEqual(app.dialog_layer._dialogs, {})
+
+
+class UdpTest(BaseTestCase):
     local_address = sipmessage.Address(
         name="Alice",
         uri=sipmessage.URI(
@@ -130,6 +135,8 @@ class UdpTest(unittest.TestCase):
             local_address=self.local_address,
             remote_address=self.remote_address,
         )
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())
 
@@ -159,6 +166,8 @@ class UdpTest(unittest.TestCase):
             local_address=self.local_address,
             remote_address=self.remote_address,
         )
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())
 
@@ -174,6 +183,8 @@ class UdpTest(unittest.TestCase):
             local_address=self.local_address,
             remote_address=self.remote_address,
         )
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())
 
@@ -194,6 +205,8 @@ class UdpTest(unittest.TestCase):
             local_address=self.local_address,
             remote_address=self.remote_address,
         )
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())
 
@@ -226,6 +239,8 @@ class UdpTest(unittest.TestCase):
             remote_address=self.remote_address,
             stun_server="stun:stun.l.google.com:19302",
         )
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())
 
@@ -242,11 +257,13 @@ class UdpTest(unittest.TestCase):
                 remote_address=self.remote_address,
             )
         self.assertEqual(str(cm.exception), "Call failed: 501 Not Implemented")
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())
 
 
-class WebSocketTest(unittest.TestCase):
+class WebSocketTest(BaseTestCase):
     local_address = sipmessage.Address(
         name="Alice",
         uri=sipmessage.URI(
@@ -277,5 +294,7 @@ class WebSocketTest(unittest.TestCase):
             local_address=self.local_address,
             remote_address=self.remote_address,
         )
+        self.assertNoDialogs(client)
+        self.assertNoDialogs(server)
 
         await asyncio.gather(client.close(), server.close())

@@ -18,14 +18,15 @@ from aiortc import (
     RTCIceParameters,
     RTCIceServer,
     RTCIceTransport,
-    RTCRtpCodecParameters,
     RTCRtpReceiver,
     RTCRtpSender,
     RTCRtpTransceiver,
     clock,
     sdp,
 )
+from aiortc.codecs import CODECS
 from aiortc.rtcdtlstransport import State
+from aiortc.rtcpeerconnection import filter_preferred_codecs, find_common_codecs
 from aiortc.rtcrtpparameters import RTCRtpReceiveParameters, RTCRtpSendParameters
 from aiortc.rtcrtpreceiver import RemoteStreamTrack
 
@@ -93,11 +94,6 @@ def create_rtp_transceiver(transport: RTCDtlsTransport) -> RTCRtpTransceiver:
     )
     transceiver.receiver._set_rtcp_ssrc(transceiver.sender._ssrc)
     transceiver.receiver._track = RemoteStreamTrack(kind=kind)
-    transceiver._codecs = [
-        RTCRtpCodecParameters(
-            mimeType="audio/PCMA", clockRate=8000, channels=1, payloadType=8
-        )
-    ]
     transceiver._transport = transport
     return transceiver
 
@@ -195,6 +191,10 @@ class Call(Dialog):
         them in ``extra_headers``.
         """
         self.__iceTransport._connection.ice_controlling = True
+        self.__rtpTransceiver._codecs = filter_preferred_codecs(
+            CODECS[self.__rtpTransceiver.kind][:],
+            self.__rtpTransceiver._preferred_codecs,
+        )
 
         request = self.create_request("INVITE")
         request.content_type = "application/sdp"
@@ -264,7 +264,15 @@ class Call(Dialog):
     async def _handle_sdp(self, value: str) -> None:
         session = sdp.SessionDescription.parse(value)
         media = session.media[0]
-        assert media.kind == "audio"
+        assert media.kind == "audio", "Only audio is supported"
+
+        # codecs
+        common = filter_preferred_codecs(
+            find_common_codecs(CODECS[self.__rtpTransceiver.kind], media.rtp.codecs),
+            self.__rtpTransceiver._preferred_codecs,
+        )
+        assert len(common), "No common codecs found"
+        self.__rtpTransceiver._codecs = common
 
         # ice
         self.__remoteIce = media.ice

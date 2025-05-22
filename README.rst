@@ -31,6 +31,7 @@ Its features include:
 - A transport layer supporting UDP, TCP and WebSocket.
 - A transaction layer for stateful user agents and proxies.
 - An RTP and RTCP stack with optional support for `ICE`_ and `DTLS-SRTP`_.
+- Support for PCMU, PCMA and Opus audio codecs.
 
 To learn more about ``sipua`` please `read the documentation`_.
 

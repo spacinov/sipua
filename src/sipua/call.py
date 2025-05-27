@@ -94,7 +94,6 @@ def create_rtp_transceiver(transport: RTCDtlsTransport) -> RTCRtpTransceiver:
     )
     transceiver.receiver._set_rtcp_ssrc(transceiver.sender._ssrc)
     transceiver.receiver._track = RemoteStreamTrack(kind=kind)
-    transceiver._transport = transport
     return transceiver
 
 
@@ -282,6 +281,7 @@ class Call(Dialog):
             # remote host does not support ICE
             default_host = media.host or session.host
             default_port = media.port
+            assert default_host is not None
             await self.__iceTransport.addRemoteCandidate(
                 RTCIceCandidate(
                     foundation="default",

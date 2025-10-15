@@ -116,6 +116,7 @@ class Call(Dialog):
         dtls: bool = False,
         local_address: sipmessage.Address,
         remote_address: sipmessage.Address,
+        remote_uri: sipmessage.URI,
         route_set: list[sipmessage.Address] = [],
         stun_server: str | None = None,
     ) -> None:
@@ -124,6 +125,7 @@ class Call(Dialog):
             dialog_layer=dialog_layer,
             local_address=local_address,
             remote_address=remote_address,
+            remote_uri=remote_uri,
             route_set=route_set,
         )
 

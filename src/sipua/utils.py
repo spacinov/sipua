@@ -77,7 +77,17 @@ def create_ack(
 
     See :rfc:`3261#section-17.1.1.3`.
     """
-    ack = sipmessage.Request("ACK", request.uri)
+
+    # The `Contact` header indicates the address to use for subsequent
+    # requests, including the ACK.
+    #
+    # https://datatracker.ietf.org/doc/html/rfc3261#section-12.1.1
+    if response.contact:
+        request_uri = response.contact[0].uri
+    else:
+        request_uri = request.uri
+
+    ack = sipmessage.Request("ACK", request_uri)
     ack.via = [request.via[0]]
     ack.to_address = response.to_address
     ack.from_address = request.from_address

@@ -55,6 +55,8 @@ CSeq: 1 INVITE
 """,
         )
 
+        # Create ACK for a response without a `Contact` header.
+        # This is theoretically invalid.
         ack = create_ack(request=request, response=response)
         self.assertMessage(
             ack,
@@ -68,7 +70,24 @@ CSeq: 1 ACK
 """,
         )
 
-    def test_create_invite_response_with_record_route(self) -> None:
+        # Create ACK for a response with a `Contact` header.
+        response.contact = [
+            sipmessage.Address.parse("<sip:+33233445566@127.0.0.1:5060;foo=bar>")
+        ]
+        ack = create_ack(request=request, response=response)
+        self.assertMessage(
+            ack,
+            b"""ACK sip:+33233445566@127.0.0.1:5060;foo=bar SIP/2.0
+Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
+To: <sip:+33233445566@127.0.0.1:5060>
+From: <sip:+33122334455@127.0.0.1:43248>;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 ACK
+
+""",
+        )
+
+    def test_create_invite_response_and_ack_with_record_route(self) -> None:
         request = parse_request(b"""INVITE sip:callee@u2.domain.com SIP/2.0
 Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
 Max-Forwards: 70
@@ -105,6 +124,21 @@ Call-ID: 126a8db08eba7fb6
 CSeq: 1 INVITE
 Record-Route: <sip:p2.domain.com;lr>
 Record-Route: <sip:p1.example.com;lr>
+
+""",
+        )
+
+        ack = create_ack(request=request, response=response)
+        self.assertMessage(
+            ack,
+            b"""ACK sip:callee@u2.domain.com SIP/2.0
+Via: SIP/2.0/UDP 127.0.0.1:43248;branch=z9hG4bK1e5b2b763d
+To: <sip:callee@127.0.0.1:5060>
+From: <sip:+caller@127.0.0.1:43248>;tag=7bc759c98ae3e112
+Call-ID: 126a8db08eba7fb6
+CSeq: 1 ACK
+Route: <sip:p1.example.com;lr>
+Route: <sip:p2.domain.com;lr>
 
 """,
         )

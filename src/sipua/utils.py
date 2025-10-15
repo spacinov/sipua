@@ -114,8 +114,8 @@ def create_contact(
         uri=sipmessage.URI(
             scheme="sip",
             host=ANY_HOST,
+            parameters=parameters,
         ),
-        parameters=parameters,
     )
 
 

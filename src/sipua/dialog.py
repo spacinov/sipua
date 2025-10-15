@@ -52,6 +52,7 @@ class Dialog:
         dialog_layer: "DialogLayer",
         local_address: sipmessage.Address,
         remote_address: sipmessage.Address,
+        remote_uri: sipmessage.URI,
         route_set: list[sipmessage.Address] = [],
     ) -> None:
         self.call_id = call_id
@@ -63,6 +64,7 @@ class Dialog:
             self.local_address = replace_tag(local_address, local_tag)
         self.local_cseq = 1
         self.remote_address = remote_address
+        self.remote_uri = remote_uri
         self.route_set = route_set
         self._key = (self.call_id, local_tag)
 
@@ -89,6 +91,7 @@ class Dialog:
             dialog_layer=dialog_layer,
             local_address=local_address,
             remote_address=remote_address,
+            remote_uri=remote_address.uri,
             route_set=route_set,
             **kwargs,
         )
@@ -109,6 +112,8 @@ class Dialog:
             dialog_layer=dialog_layer,
             local_address=request.to_address,
             remote_address=request.from_address,
+            # The target for subsequent requests is given in the Contact header.
+            remote_uri=request.contact[0].uri,
             # Populate the route set from the Record-Route headers.
             route_set=request.record_route,
             **kwargs,
@@ -164,6 +169,9 @@ class Dialog:
             tag = response.to_address.parameters["tag"]
             assert isinstance(tag, str)
             self.remote_address = replace_tag(self.remote_address, tag)
+
+            # Update the remote URI for subsequent requests.
+            self.remote_uri = response.contact[0].uri
 
             # Populate the route set from the Record-Route headers taken
             # in reverse order.

@@ -5,6 +5,7 @@
 
 
 import contextlib
+import dataclasses
 import functools
 import unittest
 from collections.abc import AsyncGenerator
@@ -107,8 +108,69 @@ class DialogTest(unittest.TestCase):
             self.assertEqual(response.code, 200)
 
             # Check client dialog state.
+            self.assertEqual(client_dialog.local_address.name, ALICE.name)
+            self.assertEqual(client_dialog.local_address.uri, ALICE.uri)
+            # A tag gets automatically generated for the local address.
+            self.assertEqual(
+                list(client_dialog.local_address.parameters.keys()), ["tag"]
+            )
             self.assertEqual(client_dialog.local_cseq, 2)
-            self.assertEqual(client_dialog.remote_address, response.to_address)
+            self.assertEqual(client_dialog.remote_address.name, BOB.name)
+            self.assertEqual(client_dialog.remote_address.uri, BOB.uri)
+            self.assertEqual(
+                list(client_dialog.remote_address.parameters.keys()), ["tag"]
+            )
+            self.assertEqual(
+                client_dialog.remote_address.parameters, response.to_address.parameters
+            )
+            self.assertEqual(
+                str(client_dialog.remote_uri), "sip:127.0.0.1:5062;transport=udp"
+            )
+            self.assertEqual(client_dialog.route_set, [])
+
+            # Client sends BYE, server responds 501.
+            request = client_dialog.create_request("BYE")
+            response = await client_dialog.send_request(request)
+            self.assertEqual(response.code, 501)
+
+    @asynctest
+    async def test_invite_with_client_address_tag(self) -> None:
+        async with self.client_and_server() as (client, server):
+            server.request_handler = functools.partial(
+                self.server_request_handler, dialog_layer=server
+            )
+
+            # Client sends INVITE, server responds 200.
+            client_dialog = sipua.Dialog.create_uac(
+                dialog_layer=client,
+                local_address=dataclasses.replace(
+                    ALICE,
+                    parameters=sipmessage.Parameters(client_stuff="foo", tag="sometag"),
+                ),
+                remote_address=BOB,
+            )
+            request = client_dialog.create_request("INVITE")
+            self.assertEqual(request.cseq, sipmessage.CSeq(sequence=1, method="INVITE"))
+            response = await client_dialog.send_request(request)
+            self.assertEqual(response.code, 200)
+
+            # Check client dialog state.
+            self.assertEqual(client_dialog.local_address.name, ALICE.name)
+            self.assertEqual(client_dialog.local_address.uri, ALICE.uri)
+            # The pre-existing tag is preserved for the local address.
+            self.assertEqual(
+                client_dialog.local_address.parameters,
+                sipmessage.Parameters(client_stuff="foo", tag="sometag"),
+            )
+            self.assertEqual(client_dialog.local_cseq, 2)
+            self.assertEqual(client_dialog.remote_address.name, BOB.name)
+            self.assertEqual(client_dialog.remote_address.uri, BOB.uri)
+            self.assertEqual(
+                list(client_dialog.remote_address.parameters.keys()), ["tag"]
+            )
+            self.assertEqual(
+                client_dialog.remote_address.parameters, response.to_address.parameters
+            )
             self.assertEqual(
                 str(client_dialog.remote_uri), "sip:127.0.0.1:5062;transport=udp"
             )

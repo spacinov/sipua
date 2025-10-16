@@ -55,13 +55,14 @@ class Dialog:
         remote_uri: sipmessage.URI,
         route_set: list[sipmessage.Address] = [],
     ) -> None:
-        self.call_id = call_id
-        self._dialog_layer = dialog_layer
-        # Set the tag for the local address unless we were given one.
+        # Generate the tag for the local address unless we were given one.
         local_tag = local_address.parameters.get("tag")
         if local_tag is None:
             local_tag = random_string(10)
-            self.local_address = replace_tag(local_address, local_tag)
+
+        self.call_id = call_id
+        self._dialog_layer = dialog_layer
+        self.local_address = replace_tag(local_address, local_tag)
         self.local_cseq = 1
         self.remote_address = remote_address
         self.remote_uri = remote_uri

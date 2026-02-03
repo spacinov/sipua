@@ -166,7 +166,7 @@ class Call(Dialog):
         await self._handle_sdp(request.body.decode())
 
         response = self.create_response(request, 200)
-        response.content_type = "application/sdp"
+        response.content_type = sipmessage.MediaType(mime_type="application/sdp")
         response.body = (await self._create_sdp()).encode()
 
         # Send response and start media flow.
@@ -198,7 +198,7 @@ class Call(Dialog):
         )
 
         request = self.create_request("INVITE")
-        request.content_type = "application/sdp"
+        request.content_type = sipmessage.MediaType(mime_type="application/sdp")
         request.body = (await self._create_sdp()).encode()
         for key, value in extra_headers:
             request.headers.add(key, value)

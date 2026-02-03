@@ -10,7 +10,7 @@ version = "0.5.4"
 # Dependencies
 dependencies = [
     "aiortc >= 1.13, < 1.15",
-    "sipmessage >= 0.6.2, < 0.7.0",
+    "sipmessage >= 0.7.0, < 0.8.0",
     "websockets >= 15, < 16",
 ]
 requires-python = ">= 3.10"

@@ -9,7 +9,7 @@ version = "0.5.5"
 
 # Dependencies
 dependencies = [
-    "aiortc >= 1.13, < 1.15",
+    "aiortc >= 1.13, < 1.16",
     "sipmessage >= 0.7.0, < 0.8.0",
     "websockets >= 15, < 16",
 ]

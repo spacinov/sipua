@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 # Version
 name = "sipua"
-version = "0.5.7"
+version = "0.5.8"
 
 # Dependencies
 dependencies = [
